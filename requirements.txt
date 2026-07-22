@@ -1,0 +1,26 @@
+# Core GUI
+customtkinter>=5.2
+
+# Voice: text-to-speech + speech-to-text
+pyttsx3>=2.99
+SpeechRecognition>=3.14
+PyAudio>=0.2.14
+
+# Windows automation
+pywin32>=306
+keyboard>=0.13.5
+pyautogui>=0.9.54
+
+# Virtual mouse (hand tracking)
+mediapipe>=0.10.30
+opencv-contrib-python>=4.9
+numpy>=1.26
+
+# System info / file ops
+psutil>=5.9
+send2trash>=1.8
+
+# Web integrations
+requests>=2.31
+wikipedia>=1.4
+pyjokes>=0.8
