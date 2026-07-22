@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from assistant.automation import clipboard
+from assistant.automation.apps import AppNotFoundError
 from assistant.core.router import CommandRouter
 from assistant.integrations import music, web
 
@@ -73,6 +75,34 @@ def build_router() -> CommandRouter:
     )
     def cmd_storage(text, ctx):
         return ctx.system_info.storage()
+
+    @router.register(
+        "uptime", keywords=("system uptime", "uptime"),
+        help="Shows how long the system has been running.",
+    )
+    def cmd_uptime(text, ctx):
+        return ctx.system_info.uptime()
+
+    @router.register(
+        "network info", keywords=("network info", "my network", "network status"),
+        help="Shows active network interfaces and local IPs.",
+    )
+    def cmd_network_info(text, ctx):
+        return ctx.system_info.network_info()
+
+    @router.register(
+        "top processes", keywords=("top processes", "what's using memory", "biggest processes"),
+        help="Lists the top processes by memory usage.",
+    )
+    def cmd_top_processes(text, ctx):
+        return ctx.system_info.top_processes()
+
+    @router.register(
+        "gpu info", keywords=("gpu info", "graphics card"),
+        help="Shows detected GPU(s).",
+    )
+    def cmd_gpu_info(text, ctx):
+        return ctx.system_info.gpu_info()
 
     # -- power / windows control --------------------------------------------
     @router.register(
@@ -153,6 +183,191 @@ def build_router() -> CommandRouter:
     def cmd_start_menu(text, ctx):
         return ctx.windows.show_start_menu()
 
+    @router.register(
+        "capture screenshot", keywords=("capture screenshot", "save screenshot", "full screenshot"),
+        help="Captures the whole screen and saves it to Pictures\\Nova Screenshots.",
+    )
+    def cmd_capture_screenshot(text, ctx):
+        return ctx.windows.capture_screenshot()
+
+    @router.register(
+        "empty recycle bin", keywords=("empty recycle bin", "empty the recycle bin"),
+        help="Empties the Recycle Bin (asks for confirmation).", destructive=True,
+    )
+    def cmd_empty_recycle_bin(text, ctx):
+        if ctx.config.require_confirmation_for_destructive and not ctx.confirm(
+            "Empty the Recycle Bin? This can't be undone."
+        ):
+            return "Cancelled."
+        return ctx.windows.empty_recycle_bin()
+
+    @router.register(
+        "toggle theme", keywords=("toggle theme", "toggle dark mode", "switch theme"),
+        help="Switches Windows between light and dark mode.",
+    )
+    def cmd_toggle_theme(text, ctx):
+        return ctx.windows.toggle_theme()
+
+    @router.register(
+        "active window", keywords=("active window", "what am i working on", "current window"),
+        help="Shows the title of the currently focused window.",
+    )
+    def cmd_active_window(text, ctx):
+        return ctx.windows.active_window()
+
+    @router.register(
+        "close active window", keywords=("close active window", "close this window"),
+        help="Closes the currently focused window.",
+    )
+    def cmd_close_active_window(text, ctx):
+        return ctx.windows.close_active_window()
+
+    @router.register(
+        "volume up", keywords=("volume up", "increase volume", "turn up the volume"),
+        help="Turns the system volume up.",
+    )
+    def cmd_volume_up(text, ctx):
+        return ctx.windows.volume_up()
+
+    @router.register(
+        "volume down", keywords=("volume down", "decrease volume", "turn down the volume"),
+        help="Turns the system volume down.",
+    )
+    def cmd_volume_down(text, ctx):
+        return ctx.windows.volume_down()
+
+    @router.register(
+        "mute volume", keywords=("mute volume", "unmute volume", "toggle mute"),
+        help="Toggles system mute.",
+    )
+    def cmd_mute_volume(text, ctx):
+        return ctx.windows.mute_toggle()
+
+    @router.register(
+        "current volume", keywords=("current volume", "what's the volume", "volume level"),
+        help="Reports the current system volume percentage.",
+    )
+    def cmd_current_volume(text, ctx):
+        return ctx.windows.get_volume()
+
+    @router.register(
+        "set volume", pattern=r"set volume to (\d{1,3})",
+        help="Sets the system volume to a percentage, e.g. 'set volume to 50'.",
+    )
+    def cmd_set_volume(text, ctx):
+        match = re.search(r"set volume to (\d{1,3})", text, re.IGNORECASE)
+        if not match:
+            return "Use: set volume to <0-100>"
+        return ctx.windows.set_volume(int(match.group(1)))
+
+    @router.register(
+        "snap left", keywords=("snap window left", "snap left"),
+        help="Snaps the active window to the left half of the screen.",
+    )
+    def cmd_snap_left(text, ctx):
+        return ctx.windows.snap_left()
+
+    @router.register(
+        "snap right", keywords=("snap window right", "snap right"),
+        help="Snaps the active window to the right half of the screen.",
+    )
+    def cmd_snap_right(text, ctx):
+        return ctx.windows.snap_right()
+
+    @router.register(
+        "maximize window", keywords=("maximize window", "maximize active window"),
+        help="Maximizes the active window.",
+    )
+    def cmd_maximize_window(text, ctx):
+        return ctx.windows.maximize_active()
+
+    @router.register(
+        "minimize active window", keywords=("minimize active window", "minimize this window"),
+        help="Minimizes just the active window (see also 'minimize windows' for all of them).",
+    )
+    def cmd_minimize_active_window(text, ctx):
+        return ctx.windows.minimize_active()
+
+    @router.register(
+        "switch window", keywords=("switch window", "alt tab"),
+        help="Switches to the next window (Alt+Tab).",
+    )
+    def cmd_switch_window(text, ctx):
+        return ctx.windows.switch_window()
+
+    @router.register(
+        "task view", keywords=("task view",),
+        help="Opens Task View.",
+    )
+    def cmd_task_view(text, ctx):
+        return ctx.windows.task_view()
+
+    @router.register(
+        "new virtual desktop", keywords=("new virtual desktop", "create virtual desktop"),
+        help="Creates a new virtual desktop.",
+    )
+    def cmd_new_virtual_desktop(text, ctx):
+        return ctx.windows.new_virtual_desktop()
+
+    @router.register(
+        "close virtual desktop", keywords=("close virtual desktop",),
+        help="Closes the current virtual desktop.",
+    )
+    def cmd_close_virtual_desktop(text, ctx):
+        return ctx.windows.close_virtual_desktop()
+
+    @router.register(
+        "next virtual desktop", keywords=("next virtual desktop",),
+        help="Switches to the next virtual desktop.",
+    )
+    def cmd_next_virtual_desktop(text, ctx):
+        return ctx.windows.next_virtual_desktop()
+
+    @router.register(
+        "previous virtual desktop", keywords=("previous virtual desktop",),
+        help="Switches to the previous virtual desktop.",
+    )
+    def cmd_previous_virtual_desktop(text, ctx):
+        return ctx.windows.previous_virtual_desktop()
+
+    @router.register(
+        "open run dialog", keywords=("open run dialog", "open run"),
+        help="Opens the Windows Run dialog.",
+    )
+    def cmd_open_run_dialog(text, ctx):
+        return ctx.windows.open_run_dialog()
+
+    @router.register(
+        "open action center", keywords=("open action center",),
+        help="Opens Action Center / Notifications.",
+    )
+    def cmd_open_action_center(text, ctx):
+        return ctx.windows.open_action_center()
+
+    @router.register(
+        "open clipboard history", keywords=("open clipboard history", "clipboard history"),
+        help="Opens Windows' native clipboard history panel.",
+    )
+    def cmd_open_clipboard_history(text, ctx):
+        return ctx.windows.open_clipboard_history()
+
+    @router.register(
+        "open emoji panel", keywords=("open emoji panel", "emoji panel"),
+        help="Opens the Windows emoji panel.",
+    )
+    def cmd_open_emoji_panel(text, ctx):
+        return ctx.windows.open_emoji_panel()
+
+    @router.register(
+        "open settings page", pattern=r"open (.+) settings",
+        help="Opens a specific Settings page, e.g. 'open display settings', 'open wifi settings'.",
+    )
+    def cmd_open_settings_page(text, ctx):
+        match = re.search(r"open (.+) settings", text, re.IGNORECASE)
+        if not match:
+            return "Use: open <page> settings"
+        return ctx.windows.open_settings_page(match.group(1))
+
     # -- chrome control -------------------------------------------------------
     @router.register("chrome new tab", keywords=("chrome new tab",), help="Opens a new Chrome tab.")
     def cmd_chrome_new_tab(text, ctx):
@@ -182,6 +397,78 @@ def build_router() -> CommandRouter:
     def cmd_chrome_bookmark(text, ctx):
         return ctx.chrome.bookmark_page()
 
+    @router.register("chrome reopen tab", keywords=("chrome reopen tab", "chrome reopen closed tab"), help="Reopens the last closed Chrome tab.")
+    def cmd_chrome_reopen_tab(text, ctx):
+        return ctx.chrome.reopen_closed_tab()
+
+    @router.register("chrome next tab", keywords=("chrome next tab",), help="Switches to the next Chrome tab.")
+    def cmd_chrome_next_tab(text, ctx):
+        return ctx.chrome.next_tab()
+
+    @router.register("chrome previous tab", keywords=("chrome previous tab",), help="Switches to the previous Chrome tab.")
+    def cmd_chrome_previous_tab(text, ctx):
+        return ctx.chrome.previous_tab()
+
+    @router.register("chrome close window", keywords=("chrome close window",), help="Closes the current Chrome window.")
+    def cmd_chrome_close_window(text, ctx):
+        return ctx.chrome.close_window()
+
+    @router.register("chrome reload", keywords=("chrome reload", "chrome refresh"), help="Reloads the current page.")
+    def cmd_chrome_reload(text, ctx):
+        return ctx.chrome.reload()
+
+    @router.register("chrome hard reload", keywords=("chrome hard reload",), help="Hard-reloads the page, bypassing cache.")
+    def cmd_chrome_hard_reload(text, ctx):
+        return ctx.chrome.hard_reload()
+
+    @router.register("chrome zoom in", keywords=("chrome zoom in",), help="Zooms in on the page.")
+    def cmd_chrome_zoom_in(text, ctx):
+        return ctx.chrome.zoom_in()
+
+    @router.register("chrome zoom out", keywords=("chrome zoom out",), help="Zooms out on the page.")
+    def cmd_chrome_zoom_out(text, ctx):
+        return ctx.chrome.zoom_out()
+
+    @router.register("chrome reset zoom", keywords=("chrome reset zoom",), help="Resets page zoom to 100%.")
+    def cmd_chrome_reset_zoom(text, ctx):
+        return ctx.chrome.zoom_reset()
+
+    @router.register("chrome print", keywords=("chrome print",), help="Opens the print dialog.")
+    def cmd_chrome_print(text, ctx):
+        return ctx.chrome.print_page()
+
+    @router.register("chrome find", keywords=("chrome find",), help="Opens find-in-page.")
+    def cmd_chrome_find(text, ctx):
+        return ctx.chrome.find_in_page()
+
+    @router.register("chrome address bar", keywords=("chrome address bar",), help="Focuses the address bar.")
+    def cmd_chrome_address_bar(text, ctx):
+        return ctx.chrome.focus_address_bar()
+
+    @router.register("chrome view source", keywords=("chrome view source",), help="Opens the page source.")
+    def cmd_chrome_view_source(text, ctx):
+        return ctx.chrome.view_source()
+
+    @router.register("chrome dev tools", keywords=("chrome dev tools", "chrome developer tools"), help="Opens Developer Tools.")
+    def cmd_chrome_dev_tools(text, ctx):
+        return ctx.chrome.dev_tools()
+
+    @router.register("chrome full screen", keywords=("chrome full screen",), help="Toggles full screen.")
+    def cmd_chrome_full_screen(text, ctx):
+        return ctx.chrome.full_screen()
+
+    @router.register("chrome clear browsing data", keywords=("chrome clear browsing data",), help="Opens clear browsing data.")
+    def cmd_chrome_clear_data(text, ctx):
+        return ctx.chrome.clear_browsing_data()
+
+    @router.register("chrome task manager", keywords=("chrome task manager",), help="Opens the browser's task manager.")
+    def cmd_chrome_task_manager(text, ctx):
+        return ctx.chrome.browser_task_manager()
+
+    @router.register("chrome bookmarks manager", keywords=("chrome bookmarks manager",), help="Opens the bookmarks manager.")
+    def cmd_chrome_bookmarks_manager(text, ctx):
+        return ctx.chrome.bookmarks_manager()
+
     @router.register(
         "chrome switch tab", pattern=r"chrome switch tab (?:to\s*)?(\d+)",
         help="Switches Chrome tab, e.g. 'chrome switch tab to 3'.",
@@ -202,12 +489,12 @@ def build_router() -> CommandRouter:
 
     @router.register(
         "youtube control",
-        pattern=r"youtube (play|pause|resume|full ?screen|theater|theatre|forward|skip|rewind|back|mute|unmute|next|previous|volume up|volume down)",
-        help="Controls YouTube playback in the focused tab, e.g. 'youtube pause'.",
+        pattern=r"youtube (play|pause|resume|full ?screen|theater|theatre|forward|skip|rewind|back|mute|unmute|next|previous|volume up|volume down|captions|subtitles|speed up|speed down|miniplayer|restart)",
+        help="Controls YouTube playback in the focused tab, e.g. 'youtube pause', 'youtube captions', 'youtube speed up'.",
     )
     def cmd_youtube(text, ctx):
         match = re.search(
-            r"youtube (play|pause|resume|full ?screen|theater|theatre|forward|skip|rewind|back|mute|unmute|next|previous|volume up|volume down)",
+            r"youtube (play|pause|resume|full ?screen|theater|theatre|forward|skip|rewind|back|mute|unmute|next|previous|volume up|volume down|captions|subtitles|speed up|speed down|miniplayer|restart)",
             text,
             re.IGNORECASE,
         )
@@ -227,11 +514,43 @@ def build_router() -> CommandRouter:
 
     @router.register(
         "open app", keywords=("open",),
-        help="Opens an application by name, e.g. 'open notepad' (customize paths in Settings).",
+        help="Opens an application by name, e.g. 'open notepad' (customize paths in Settings). "
+        "Falls back to opening it as a website if it's not a known app (e.g. 'open youtube').",
     )
     def cmd_open_app(text, ctx):
         name = _strip_any(text, ("open",))
-        return ctx.apps.open(name)
+        try:
+            return ctx.apps.open(name)
+        except AppNotFoundError:
+            # Not a registered app and not resolvable on PATH - a very
+            # common reason someone says "open <name>" is a website
+            # (open youtube, open github, ...), so try that before failing.
+            return ctx.chrome.open_site(name)
+
+    @router.register(
+        "list running apps", keywords=("list running apps", "what's running", "running processes"),
+        help="Lists currently running processes.",
+    )
+    def cmd_list_running(text, ctx):
+        return ctx.apps.list_running()
+
+    @router.register(
+        "is app running", pattern=r"is (.+) running",
+        help="Checks whether an app/process is running, e.g. 'is spotify running'.",
+    )
+    def cmd_is_running(text, ctx):
+        match = re.search(r"is (.+) running", text, re.IGNORECASE)
+        if not match:
+            return "Use: is <name> running"
+        return ctx.apps.is_running(match.group(1))
+
+    @router.register(
+        "close app", keywords=("close app", "quit app", "kill app"),
+        help="Closes a running application by name, e.g. 'close app notepad'.",
+    )
+    def cmd_close_app(text, ctx):
+        name = _strip_any(text, ("close app", "quit app", "kill app"))
+        return ctx.apps.close(name)
 
     # -- files & directories -----------------------------------------------------
     @router.register(
@@ -306,6 +625,84 @@ def build_router() -> CommandRouter:
             return "Use: find files <pattern> in <folder>"
         return ctx.files.search_files(match.group(2), match.group(1))
 
+    @router.register(
+        "copy path", pattern=r"copy (.+?) to (.+)",
+        help="Copies a file/folder, e.g. 'copy D:\\a.txt to D:\\backup\\a.txt'.",
+    )
+    def cmd_copy(text, ctx):
+        match = re.search(r"copy (.+?) to (.+)", text, re.IGNORECASE)
+        if not match:
+            return "Use: copy <source> to <destination>"
+        return ctx.files.copy(match.group(1), match.group(2))
+
+    @router.register(
+        "compress path", keywords=("compress folder", "compress file", "zip folder", "zip file"),
+        help="Compresses a file/folder into a .zip, e.g. 'zip folder D:\\Projects\\demo'.",
+    )
+    def cmd_compress(text, ctx):
+        path = _strip_any(text, ("compress folder", "compress file", "zip folder", "zip file"))
+        return ctx.files.compress(path)
+
+    @router.register(
+        "extract archive", keywords=("extract archive", "unzip"),
+        help="Extracts a .zip archive, e.g. 'unzip D:\\Projects\\demo.zip'.",
+    )
+    def cmd_extract(text, ctx):
+        path = _strip_any(text, ("extract archive", "unzip"))
+        return ctx.files.extract(path)
+
+    @router.register(
+        "file info", keywords=("file info", "file details"),
+        help="Shows size/modified/created details for a file or folder.",
+    )
+    def cmd_file_info(text, ctx):
+        path = _strip_any(text, ("file info", "file details"))
+        return ctx.files.file_info(path)
+
+    @router.register("open downloads", keywords=("open downloads",), help="Opens your Downloads folder.")
+    def cmd_open_downloads(text, ctx):
+        return ctx.files.quick_folder("downloads")
+
+    @router.register(
+        "open desktop folder",
+        keywords=("open desktop folder", "open my desktop", "open desktop"),
+        help="Opens your Desktop folder.",
+    )
+    def cmd_open_desktop(text, ctx):
+        return ctx.files.quick_folder("desktop")
+
+    @router.register(
+        "open documents folder",
+        keywords=("open documents folder", "open my documents", "open documents"),
+        help="Opens your Documents folder.",
+    )
+    def cmd_open_documents(text, ctx):
+        return ctx.files.quick_folder("documents")
+
+    @router.register(
+        "open pictures folder",
+        keywords=("open pictures folder", "open pictures"),
+        help="Opens your Pictures folder.",
+    )
+    def cmd_open_pictures(text, ctx):
+        return ctx.files.quick_folder("pictures")
+
+    @router.register(
+        "open videos folder",
+        keywords=("open videos folder", "open videos"),
+        help="Opens your Videos folder.",
+    )
+    def cmd_open_videos(text, ctx):
+        return ctx.files.quick_folder("videos")
+
+    @router.register(
+        "open music folder",
+        keywords=("open music folder", "open music"),
+        help="Opens your Music folder.",
+    )
+    def cmd_open_music_folder(text, ctx):
+        return ctx.files.quick_folder("music")
+
     # -- command line ---------------------------------------------------------------
     @router.register(
         "run command", keywords=("run command", "cmd ", "execute command"),
@@ -363,6 +760,28 @@ def build_router() -> CommandRouter:
     @router.register("my location", keywords=("my location",), help="Shows your approximate location.")
     def cmd_my_location(text, ctx):
         return web.my_ip_and_location()
+
+    @router.register(
+        "read clipboard", keywords=("read clipboard", "what's on my clipboard", "show clipboard"),
+        help="Shows the current clipboard contents.",
+    )
+    def cmd_read_clipboard(text, ctx):
+        return clipboard.read_clipboard()
+
+    @router.register(
+        "copy to clipboard", keywords=("copy to clipboard",),
+        help="Copies text to the clipboard, e.g. 'copy to clipboard hello world'.",
+    )
+    def cmd_write_clipboard(text, ctx):
+        value = _strip_any(text, ("copy to clipboard",))
+        return clipboard.write_clipboard(value)
+
+    @router.register(
+        "clear clipboard", keywords=("clear clipboard",),
+        help="Clears the clipboard.",
+    )
+    def cmd_clear_clipboard(text, ctx):
+        return clipboard.clear_clipboard()
 
     @router.register(
         "joke", keywords=("tell me a joke", "programming joke", "chuck joke", "joke"),

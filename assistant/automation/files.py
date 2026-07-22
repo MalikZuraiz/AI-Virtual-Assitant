@@ -5,9 +5,19 @@ import fnmatch
 import logging
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("assistant.files")
+
+_QUICK_FOLDERS = {
+    "downloads": "Downloads",
+    "desktop": "Desktop",
+    "documents": "Documents",
+    "pictures": "Pictures",
+    "videos": "Videos",
+    "music": "Music",
+}
 
 
 class FileManager:
@@ -101,3 +111,66 @@ class FileManager:
             return f"No files matching '{pattern}' under {base}."
         lines = [f"Found {len(matches)} match(es):"] + [f"  {m}" for m in matches]
         return "\n".join(lines)
+
+    def copy(self, source: str, destination: str) -> str:
+        src = Path(source).expanduser()
+        dst = Path(destination).expanduser()
+        if not src.exists():
+            return f"'{source}' does not exist."
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+        return f"Copied {src} to {dst}."
+
+    def compress(self, source: str, archive_path: str | None = None) -> str:
+        src = Path(source).expanduser()
+        if not src.exists():
+            return f"'{source}' does not exist."
+        if archive_path:
+            archive_base = str(Path(archive_path).expanduser().with_suffix(""))
+        else:
+            archive_base = str(src.with_suffix("")) if src.is_file() else str(src)
+        if src.is_dir():
+            shutil.make_archive(archive_base, "zip", root_dir=str(src))
+        else:
+            shutil.make_archive(archive_base, "zip", root_dir=str(src.parent), base_dir=src.name)
+        return f"Created archive {archive_base}.zip"
+
+    def extract(self, archive_path: str, destination: str | None = None) -> str:
+        archive = Path(archive_path).expanduser()
+        if not archive.exists():
+            return f"'{archive_path}' does not exist."
+        dest = Path(destination).expanduser() if destination else archive.with_suffix("")
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.unpack_archive(str(archive), str(dest))
+        return f"Extracted {archive} to {dest}."
+
+    def file_info(self, path: str) -> str:
+        target = Path(path).expanduser()
+        if not target.exists():
+            return f"'{path}' does not exist."
+        stat = target.stat()
+        size = stat.st_size
+        if size < 1024:
+            size_str = f"{size} bytes"
+        elif size < 1024 ** 2:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size / 1024 ** 2:.1f} MB"
+        return (
+            f"{target}\n"
+            f"  Type: {'Folder' if target.is_dir() else 'File'}\n"
+            f"  Size: {size_str}\n"
+            f"  Modified: {datetime.fromtimestamp(stat.st_mtime):%Y-%m-%d %H:%M:%S}\n"
+            f"  Created: {datetime.fromtimestamp(stat.st_ctime):%Y-%m-%d %H:%M:%S}"
+        )
+
+    def quick_folder(self, name: str) -> str:
+        key = name.strip().lower()
+        subfolder = _QUICK_FOLDERS.get(key)
+        if subfolder is None:
+            known = ", ".join(sorted(_QUICK_FOLDERS))
+            return f"I don't know the folder '{name}'. Try one of: {known}."
+        return self.open_path(str(Path.home() / subfolder))

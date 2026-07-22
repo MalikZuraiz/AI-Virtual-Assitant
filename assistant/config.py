@@ -27,20 +27,43 @@ def _default_music_dir() -> str:
 
 DEFAULT_APPS: dict[str, str] = {
     "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "firefox": r"C:\Program Files\Mozilla Firefox\firefox.exe",
     "notepad": "notepad.exe",
+    "wordpad": "wordpad.exe",
     "calculator": "calc.exe",
     "explorer": "explorer.exe",
     "word": "winword.exe",
     "excel": "excel.exe",
+    "powerpoint": "powerpnt.exe",
+    "outlook": "outlook.exe",
     "paint": "mspaint.exe",
+    "snipping tool": "SnippingTool.exe",
     "task manager": "taskmgr.exe",
     "control panel": "control.exe",
     "vs code": "code",
+    "terminal": "wt.exe",
+    "powershell": "powershell.exe",
+    "cmd": "cmd.exe",
+    "camera": "microsoft.windows.camera:",
+    "photos": "ms-photos:",
+    "magnifier": "magnify.exe",
+    "on-screen keyboard": "osk.exe",
+    "character map": "charmap.exe",
+    "remote desktop": "mstsc.exe",
+    "media player": "wmplayer.exe",
+    "device manager": "devmgmt.msc",
+    "services": "services.msc",
+    "event viewer": "eventvwr.msc",
+    "registry editor": "regedit",
+    "disk management": "diskmgmt.msc",
+    "task scheduler": "taskschd.msc",
 }
 
 DEFAULT_SHELL_ALLOWLIST: list[str] = [
     "dir", "cd", "echo", "ipconfig", "ping", "tasklist", "systeminfo",
     "where", "whoami", "tree", "git", "python", "pip", "node", "npm", "code",
+    "powershell", "netstat", "nslookup", "hostname", "tracert", "type", "findstr",
 ]
 
 
@@ -59,6 +82,26 @@ class AppConfig:
     require_confirmation_for_destructive: bool = True
     virtual_mouse_camera_index: int = 0
     virtual_mouse_fps_limit: int = 30
+    # How much of the camera frame maps to the full screen: 1.0 = the whole
+    # frame edge-to-edge (the old, unreachable-corners behavior); higher
+    # values shrink the "active" region so a smaller, more comfortable hand
+    # movement range covers the entire screen - raise this if you can't
+    # reach the screen edges (especially the bottom).
+    virtual_mouse_sensitivity: float = 1.7
+    # Center of the active region, as a fraction of the frame (0.5 = middle).
+    # The default y is below center because a hand held up in front of a
+    # laptop webcam naturally sits in the lower-middle of the frame, not
+    # dead center - this makes the reachable-bottom problem better out of
+    # the box; nudge lower (e.g. 0.35) if the bottom is still hard to reach,
+    # or back toward 0.5 if the top is now too easy to overshoot.
+    virtual_mouse_center_x: float = 0.5
+    virtual_mouse_center_y: float = 0.42
+    # One-Euro-filter smoothing: min_cutoff lower = smoother/less jitter
+    # when the hand is nearly still; beta higher = less lag when moving
+    # fast. These two together give smooth-but-responsive cursor motion
+    # instead of the flat, laggy exponential smoothing this used to use.
+    virtual_mouse_min_cutoff: float = 0.6
+    virtual_mouse_beta: float = 0.6
 
     @property
     def config_dir(self) -> Path:
@@ -90,6 +133,13 @@ class AppConfig:
             for key, value in data.items():
                 if hasattr(cfg, key):
                     setattr(cfg, key, value)
+            # Merge in newly-added default apps/allowlist entries for configs
+            # saved by an older version of the assistant, without discarding
+            # the user's own customizations.
+            merged_apps = dict(DEFAULT_APPS)
+            merged_apps.update(cfg.apps)
+            cfg.apps = merged_apps
+            cfg.shell_allowlist = sorted(set(cfg.shell_allowlist) | set(DEFAULT_SHELL_ALLOWLIST))
         except (json.JSONDecodeError, OSError):
             pass
         return cfg

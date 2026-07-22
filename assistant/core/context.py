@@ -63,6 +63,11 @@ class Context:
             virtual_mouse=VirtualMouseController(
                 camera_index=config.virtual_mouse_camera_index,
                 fps_limit=config.virtual_mouse_fps_limit,
+                sensitivity=config.virtual_mouse_sensitivity,
+                center_x=config.virtual_mouse_center_x,
+                center_y=config.virtual_mouse_center_y,
+                min_cutoff=config.virtual_mouse_min_cutoff,
+                beta=config.virtual_mouse_beta,
                 on_frame=on_vm_frame,
                 on_status=on_vm_status,
             ),
