@@ -1,0 +1,223 @@
+{
+  "_comment": "Report generators. Output files produced by a run are collected and moved into today's folder under output_root, e.g. '<output_root>/7 August'. The folder is created if missing.",
+  "output_root": "D:/Reports",
+  "collect_extensions": [
+    ".xlsx",
+    ".xlsm",
+    ".csv",
+    ".pdf",
+    ".docx",
+    ".pptx"
+  ],
+  "reports": [
+    {
+      "name": "fleet analysis report",
+      "trigger": [
+        "generate fleet analysis report",
+        "create fleet analysis report",
+        "make fleet analysis report",
+        "run fleet analysis report",
+        "fleet analysis report"
+      ],
+      "working_directory": "D:/Python Reporting/Fleet Analysis Report",
+      "run_as": "python",
+      "target": "build_report.py",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Fleet Analysis Report.",
+      "alternate": null
+    },
+    {
+      "name": "fmo penalties non compliance report",
+      "trigger": [
+        "generate fmo penalties non compliance report",
+        "create fmo penalties non compliance report",
+        "make fmo penalties non compliance report",
+        "run fmo penalties non compliance report",
+        "fmo penalties non compliance report"
+      ],
+      "working_directory": "D:/Python Reporting/FMO Penalties non Compliance Report",
+      "run_as": "exe",
+      "target": "dist/fmo_not_imposing_report.exe",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in FMO Penalties non Compliance Report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "fmo_not_imposing_report.py"
+      }
+    },
+    {
+      "name": "pending complaint analysis report",
+      "trigger": [
+        "generate pending complaint analysis report",
+        "create pending complaint analysis report",
+        "make pending complaint analysis report",
+        "run pending complaint analysis report",
+        "pending complaint analysis report"
+      ],
+      "working_directory": "D:/Python Reporting/Pending Complaint Analysis Report",
+      "run_as": "exe",
+      "target": "dist/generate_complaint_analysis_report.exe",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Pending Complaint Analysis Report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "generate_complaint_analysis_report.py"
+      }
+    },
+    {
+      "name": "pending penalties report",
+      "trigger": [
+        "generate pending penalties report",
+        "create pending penalties report",
+        "make pending penalties report",
+        "run pending penalties report",
+        "pending penalties report"
+      ],
+      "working_directory": "D:/Python Reporting/Pending Penalties report",
+      "run_as": "exe",
+      "target": "dist/generate_pending_penalties_report.exe",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Pending Penalties report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "generate_pending_penalties_report.py"
+      }
+    },
+    {
+      "name": "pending penalties under 2% report",
+      "trigger": [
+        "generate pending penalties under 2% report",
+        "create pending penalties under 2% report",
+        "make pending penalties under 2% report",
+        "run pending penalties under 2% report",
+        "pending penalties under 2% report"
+      ],
+      "working_directory": "D:/Python Reporting/Pending penalties under 2% report",
+      "run_as": "exe",
+      "target": "dist/generate_report.exe",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Pending penalties under 2% report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "generate_report.py"
+      }
+    },
+    {
+      "name": "python bot (ped)",
+      "trigger": [
+        "generate python bot (ped) report",
+        "generate python bot (ped)",
+        "create python bot (ped)",
+        "make python bot (ped)",
+        "run python bot (ped)",
+        "python bot (ped)"
+      ],
+      "working_directory": "D:/Office/Scripts/Python Bot (PED)",
+      "run_as": "python",
+      "target": "scrape_ped_report.py",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Python Bot (PED).",
+      "alternate": null
+    },
+    {
+      "name": "tmo scoring report",
+      "trigger": [
+        "generate tmo scoring report",
+        "create tmo scoring report",
+        "make tmo scoring report",
+        "run tmo scoring report",
+        "tmo scoring report"
+      ],
+      "working_directory": "D:/Python Reporting/TMO scoring Report",
+      "run_as": "exe",
+      "target": "dist/tmo_report_generator.exe",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in TMO scoring Report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "tmo_report_generator.py"
+      }
+    },
+    {
+      "name": "ranking report (complains kpi)",
+      "trigger": [
+        "generate ranking report (complains kpi) report",
+        "generate ranking report (complains kpi)",
+        "create ranking report (complains kpi)",
+        "make ranking report (complains kpi)",
+        "run ranking report (complains kpi)",
+        "ranking report (complains kpi)"
+      ],
+      "working_directory": "D:/Python Reporting/Ranking Report (complains KPI)",
+      "run_as": "python",
+      "target": "scripts/build_report.py",
+      "args": [],
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator discovered in Ranking Report (complains KPI).",
+      "alternate": null
+    }
+  ]
+}

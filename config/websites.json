@@ -1,0 +1,40 @@
+{
+  "_comment": "Add a site here and it is instantly openable by name - no restart, no code change. 'open <name>' uses the default browser; 'open <name> in a new window' / 'in <browser>' override that.",
+  "default_browser": "chrome",
+  "sites": [
+    {
+      "name": "youtube",
+      "url": "https://www.youtube.com",
+      "trigger": []
+    },
+    {
+      "name": "github",
+      "url": "https://github.com",
+      "trigger": []
+    },
+    {
+      "name": "gmail",
+      "url": "https://mail.google.com",
+      "trigger": [
+        "open mail"
+      ]
+    },
+    {
+      "name": "chatgpt",
+      "url": "https://chat.openai.com",
+      "trigger": []
+    },
+    {
+      "name": "google drive",
+      "url": "https://drive.google.com",
+      "trigger": []
+    },
+    {
+      "name": "whatsapp",
+      "url": "https://web.whatsapp.com",
+      "trigger": [
+        "open whatsapp web"
+      ]
+    }
+  ]
+}

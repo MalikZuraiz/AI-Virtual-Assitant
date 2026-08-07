@@ -1,0 +1,21 @@
+{
+  "_comment": "Custom runnable commands built through the in-chat 'add command' wizard. run_as: python | venv_python | exe | shell | open",
+  "commands": [
+    {
+      "name": "nova directory",
+      "trigger": [
+        "open nova",
+        "open assistant",
+        "open folder of nova"
+      ],
+      "working_directory": "D:/Ai",
+      "run_as": "open",
+      "target": "ai-virtual assitant",
+      "args": [],
+      "description": "Added from chat on Ai.",
+      "after": {
+        "open": "a folder"
+      }
+    }
+  ]
+}

@@ -29,8 +29,57 @@ def _strip_any(text: str, prefixes: tuple[str, ...]) -> str:
     return text.strip()
 
 
-def build_router() -> CommandRouter:
-    router = CommandRouter()
+#: Rough grouping for the help listing. First matching prefix wins, so the
+#: 111 commands here stay browsable without annotating every registration.
+_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("chrome", ("chrome",)),
+    ("youtube", ("youtube",)),
+    ("windows/power", ("shutdown", "restart", "lock", "cancel shutdown", "sleep")),
+    ("windows/desktop", (
+        "minimize", "maximize", "restore", "snap", "switch window", "task view",
+        "virtual desktop", "active window", "close active", "screenshot", "capture",
+        "run dialog", "action center", "clipboard history", "emoji", "recycle bin",
+        "toggle theme",
+    )),
+    ("windows/volume", ("volume", "mute")),
+    ("windows/settings", ("open display", "open sound", "open wifi", "open network",
+                          "open airplane", "open bluetooth", "open night", "open power",
+                          "open battery", "open apps", "open personalization",
+                          "open update", "open storage settings", "open privacy",
+                          "open accounts", "open notifications")),
+    ("apps", ("open app", "register app", "list running", "is ", "close app")),
+    ("files", ("folder", "file", "rename", "move", "copy", "delete", "find files",
+               "compress", "zip", "extract", "unzip", "open downloads", "open desktop",
+               "open documents", "open pictures", "open videos", "open music")),
+    ("shell", ("run command", "force run")),
+    ("clipboard", ("clipboard",)),
+    ("system", ("time", "date", "system", "storage", "uptime", "network", "processes", "gpu")),
+    ("web", ("search", "wikipedia", "weather", "my ip", "my location", "joke")),
+    ("entertainment", ("play music",)),
+    ("vision", ("virtual mouse",)),
+)
+
+
+def _assign_categories(router: CommandRouter) -> None:
+    for command in router.commands:
+        if command.category != "general":
+            continue
+        name = command.name.lower()
+        for category, prefixes in _CATEGORY_RULES:
+            if any(name.startswith(p) or p in name for p in prefixes):
+                command.category = category
+                break
+        else:
+            command.category = "pc control"
+
+
+def register_builtins(router: CommandRouter) -> CommandRouter:
+    """Register the PC-automation pack onto an existing router."""
+    return build_router(router)
+
+
+def build_router(router: CommandRouter | None = None) -> CommandRouter:
+    router = router if router is not None else CommandRouter()
 
     # -- greetings / meta -------------------------------------------------
     @router.register(
@@ -812,4 +861,5 @@ def build_router() -> CommandRouter:
     def cmd_vm_stop(text, ctx):
         return ctx.virtual_mouse.stop()
 
+    _assign_categories(router)
     return router

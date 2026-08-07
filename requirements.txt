@@ -1,27 +1,48 @@
-# Core GUI
-customtkinter>=5.2
+# Nova - personal desktop assistant
+# Everything here is free and either offline or free-tier-without-a-key.
+# No paid APIs anywhere (project brief §1).
 
-# Voice: text-to-speech + speech-to-text
-pyttsx3>=2.99
-SpeechRecognition>=3.14
+# --- GUI: frameless HUD + system tray ---------------------------------------
+PyQt6>=6.7
+pystray>=0.19            # tray fallback if Qt's tray is unavailable
+Pillow>=10.0
+
+# --- Command matching --------------------------------------------------------
+rapidfuzz>=3.9           # fuzzy trigger matching (voice transcripts, typos)
+
+# --- Scheduling --------------------------------------------------------------
+APScheduler>=3.10        # reminders; SQLite persistence uses stdlib sqlite3
+python-dateutil>=2.9
+watchdog>=4.0            # optional: notice config edits without 'refresh'
+
+# --- Voice -------------------------------------------------------------------
+edge-tts>=6.1            # free neural TTS, no API key
+pyttsx3>=2.99            # offline TTS fallback
+faster-whisper>=1.0      # local STT (use tiny/base + int8 on CPU-only machines)
+sounddevice>=0.4         # microphone capture
+SpeechRecognition>=3.14  # fallback STT path
 PyAudio>=0.2.14
 
-# Windows automation
+# --- Windows automation ------------------------------------------------------
 pywin32>=306
-keyboard>=0.13.5
+keyboard>=0.13.5         # global hotkeys
 pyautogui>=0.9.54
-pycaw>=20240210
+pycaw>=20240210          # volume control
+pyperclip>=1.9
 
-# Virtual mouse (hand tracking)
+# --- System info / file ops --------------------------------------------------
+psutil>=5.9
+send2trash>=1.8
+
+# --- Web integrations (all free, no keys) ------------------------------------
+requests>=2.31
+wikipedia>=1.4
+pyjokes>=0.8
+
+# --- Vision (gesture module; optional, imported lazily) ----------------------
 mediapipe>=0.10.30
 opencv-contrib-python>=4.9
 numpy>=1.26
 
-# System info / file ops
-psutil>=5.9
-send2trash>=1.8
-
-# Web integrations
-requests>=2.31
-wikipedia>=1.4
-pyjokes>=0.8
+# --- Legacy CustomTkinter UI (kept reachable via --legacy-ui) ----------------
+customtkinter>=5.2

@@ -1,0 +1,11 @@
+{
+  "_comment": "Human-editable source of truth for reminders. The runtime copy lives in SQLite; edits here are picked up on 'refresh'. schedule: once | daily | weekly | monthly",
+  "reminders": [
+    {
+      "text": "call family",
+      "schedule": "once",
+      "time": "14:14",
+      "date": "2026-08-07"
+    }
+  ]
+}

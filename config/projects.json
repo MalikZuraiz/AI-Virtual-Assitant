@@ -1,0 +1,45 @@
+{
+  "_comment": "Registered code projects. 'create flutter app X' auto-appends here.",
+  "projects": [
+    {
+      "name": "fleet analysis report",
+      "type": "python",
+      "path": "D:/Python Reporting/Fleet Analysis Report"
+    },
+    {
+      "name": "fmo penalties non compliance report",
+      "type": "python",
+      "path": "D:/Python Reporting/FMO Penalties non Compliance Report"
+    },
+    {
+      "name": "pending complaint analysis report",
+      "type": "python",
+      "path": "D:/Python Reporting/Pending Complaint Analysis Report"
+    },
+    {
+      "name": "pending penalties report",
+      "type": "python",
+      "path": "D:/Python Reporting/Pending Penalties report"
+    },
+    {
+      "name": "pending penalties under 2% report",
+      "type": "python",
+      "path": "D:/Python Reporting/Pending penalties under 2% report"
+    },
+    {
+      "name": "python bot (ped)",
+      "type": "python",
+      "path": "D:/Office/Scripts/Python Bot (PED)"
+    },
+    {
+      "name": "tmo scoring report",
+      "type": "python",
+      "path": "D:/Python Reporting/TMO scoring Report"
+    },
+    {
+      "name": "ranking report (complains kpi)",
+      "type": "python",
+      "path": "D:/Python Reporting/Ranking Report (complains KPI)"
+    }
+  ]
+}

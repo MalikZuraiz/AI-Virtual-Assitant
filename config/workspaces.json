@@ -1,0 +1,28 @@
+{
+  "_comment": "Folder scaffolding the assistant keeps in place. 'setup workspace' (re)creates any missing folder; it never moves or deletes anything you already have.",
+  "hubs": [
+    {
+      "name": "entertainment",
+      "path": "D:/Entertainment",
+      "folders": [
+        "Movies",
+        "Series",
+        "Music",
+        "Funny Clips",
+        "Downloads"
+      ]
+    },
+    {
+      "name": "office",
+      "path": "D:/Office",
+      "folders": [
+        "Scripts",
+        "Reports",
+        "Data",
+        "Documents",
+        "Projects/Python",
+        "Projects/Flutter"
+      ]
+    }
+  ]
+}

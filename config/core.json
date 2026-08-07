@@ -1,0 +1,36 @@
+{
+  "_comment": "Broadest shared settings. Other config files' entries are created inside these defaults.",
+  "assistant_name": "Nova",
+  "defaults": {
+    "workspace_root": "D:/",
+    "office_root": "D:/Office",
+    "entertainment_root": "D:/Entertainment",
+    "flutter_projects_dir": "D:/Office/Projects/Flutter",
+    "python_projects_dir": "D:/Office/Projects/Python",
+    "scripts_dir": "D:/Office/Scripts",
+    "reports_root": "D:/Reports",
+    "data_dir": "D:/PED DATA EXTRACTIONS",
+    "documents_dir": "C:/Users/Windows/Documents",
+    "downloads_dir": "C:/Users/Windows/Downloads"
+  },
+  "day_folder": {
+    "_comment": "Tokens: {d} {dd} {month} {mon} {m} {mm} {yyyy} {yy} {weekday}",
+    "format": "{d} {month}"
+  },
+  "browsers": {
+    "default": "chrome",
+    "known": {
+      "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "edge": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "firefox": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+      "brave": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "opera": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Opera\\opera.exe"
+    }
+  },
+  "behaviour": {
+    "speak_replies": true,
+    "confirm_destructive": true,
+    "fuzzy_match_threshold": 82
+  },
+  "last_active_path": null
+}

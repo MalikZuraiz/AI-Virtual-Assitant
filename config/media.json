@@ -1,0 +1,35 @@
+{
+  "_comment": "Entertainment libraries. 'play <name>' searches these folders.",
+  "libraries": {
+    "movies": [
+      "D:/Movies",
+      "D:/Entertainment/Movies"
+    ],
+    "series": [
+      "D:/Entertainment/Series"
+    ],
+    "music": [
+      "C:/Users/Windows/Music"
+    ],
+    "clips": [
+      "D:/Entertainment/Funny Clips"
+    ]
+  },
+  "video_extensions": [
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".m4v",
+    ".webm"
+  ],
+  "audio_extensions": [
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".flac",
+    ".aac",
+    ".ogg"
+  ],
+  "player": null
+}

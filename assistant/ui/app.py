@@ -27,8 +27,13 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
-from assistant.core.commands import build_router
+from assistant.commands import register_all
+from assistant.core.commands import register_builtins
 from assistant.core.context import Context
+from assistant.core.jobs import JobRunner
+from assistant.core.router import CommandRouter
+from assistant.core.speech import SpeechListener
+from assistant.store.store import ConfigStore
 from assistant.ui.gif_player import AnimatedGifLabel
 from assistant.ui.settings_dialog import SettingsDialog
 
@@ -85,12 +90,21 @@ class App(ctk.CTk):
         # the user would stare at a blank window the whole time.
         splash, splash_gif = self._create_splash()
 
-        self.router = build_router()
+        # The config-driven packs (reports, links, projects, media, reminders)
+        # are registered here too, so this fallback window can do everything
+        # the Qt HUD can - it is a safety net, not a reduced build.
+        self.store = ConfigStore()
+        self.router = CommandRouter()
+        register_builtins(self.router)
+        register_all(self.router, self.store)
+        self.jobs = JobRunner(workers=2)
         self._splash_tick(splash, splash_gif, 3)
 
-        self.ctx = Context.build(
-            config, on_vm_frame=self._push_vm_frame, on_vm_status=self._push_vm_status
+        self.ctx = Context.build(config, self.store, self.router, self.jobs)
+        self.ctx.set_virtual_mouse_hooks(
+            on_frame=self._push_vm_frame, on_status=self._push_vm_status
         )
+        self.ctx.listener = SpeechListener()
         self.ctx.confirm = self._confirm_blocking
         self._splash_tick(splash, splash_gif, 8)
 
@@ -327,8 +341,10 @@ class App(ctk.CTk):
         threading.Thread(target=self._dispatch, args=(text,), daemon=True).start()
 
     def _dispatch(self, text: str) -> None:
-        response = self.router.dispatch(text, self.ctx)
-        self._emit_response(response)
+        if self.ctx.conversation.active:
+            self._emit_response(self.ctx.conversation.feed(text))
+            return
+        self._emit_response(self.router.dispatch(text, self.ctx).text)
 
     # ---------------------------------------------------------------- voice
     def _on_mic_toggle(self) -> None:
