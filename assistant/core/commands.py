@@ -56,7 +56,7 @@ _CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("system", ("time", "date", "system", "storage", "uptime", "network", "processes", "gpu")),
     ("web", ("search", "wikipedia", "weather", "my ip", "my location", "joke")),
     ("entertainment", ("play music",)),
-    ("vision", ("virtual mouse",)),
+    ("vision", ("gesture",)),
 )
 
 
@@ -627,12 +627,16 @@ def build_router(router: CommandRouter | None = None) -> CommandRouter:
         return ctx.files.create_file(path)
 
     @router.register(
-        "open path", keywords=("open folder", "open path"),
-        help="Opens a folder/file in Explorer, e.g. 'open folder D:\\Projects'.",
+        "open path", keywords=("open folder", "open directory", "open path"),
+        help="Opens a folder by name or path, e.g. 'open folder office'.",
     )
     def cmd_open_path(text, ctx):
-        path = _strip_any(text, ("open folder", "open path"))
-        return ctx.files.open_path(path)
+        from assistant.commands.tools import open_folder_by_name
+
+        path = _strip_any(text, ("open folder", "open directory", "open path"))
+        # A real path opens straight away; a bare name ("office") gets
+        # searched for instead of the old "'office' does not exist".
+        return open_folder_by_name(ctx, path)
 
     @router.register(
         "rename path", pattern=r"rename (.+?) to (.+)",
@@ -840,26 +844,23 @@ def build_router(router: CommandRouter | None = None) -> CommandRouter:
         category = "chuck" if "chuck" in text.lower() else "neutral"
         return web.tell_joke(category)
 
-    # -- music -------------------------------------------------------------------------------
-    @router.register("play music", keywords=("play ",), help="Plays a song from your music folder, e.g. 'play imagine'.")
+    # -- music -----------------------------------------------------------------------------
+    # NOTE: "play <anything>" is handled by assistant/commands/media.py, which
+    # searches every configured library (video and audio) and offers numbered
+    # matches. This one stays for the explicit "play from my music folder"
+    # phrasing only - a bare "play " keyword here used to swallow every play
+    # command and send it to the Windows Music folder.
+    @router.register(
+        "play from music folder",
+        keywords=("play from my music folder", "play from music folder"),
+        help="Plays a song from the music folder configured in Settings.",
+    )
     def cmd_play_music(text, ctx):
-        query = _strip_any(text, ("play",))
+        query = _strip_any(text, ("play from my music folder", "play from music folder", "play"))
         return music.play_music(query, ctx.config.music_dir)
 
-    # -- virtual mouse -------------------------------------------------------------------------
-    @router.register(
-        "start virtual mouse", keywords=("start virtual mouse", "enable virtual mouse", "virtual mouse on"),
-        help="Starts hand-tracking mouse control using the webcam.",
-    )
-    def cmd_vm_start(text, ctx):
-        return ctx.virtual_mouse.start()
-
-    @router.register(
-        "stop virtual mouse", keywords=("stop virtual mouse", "disable virtual mouse", "virtual mouse off"),
-        help="Stops the virtual mouse.",
-    )
-    def cmd_vm_stop(text, ctx):
-        return ctx.virtual_mouse.stop()
+    # Hand tracking lives entirely in the gesture pack now - see
+    # assistant/commands/vision.py. Cursor control was removed on purpose.
 
     _assign_categories(router)
     return router

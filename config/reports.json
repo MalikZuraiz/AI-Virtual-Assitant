@@ -1,6 +1,6 @@
 {
   "_comment": "Report generators. Output files produced by a run are collected and moved into today's folder under output_root, e.g. '<output_root>/7 August'. The folder is created if missing.",
-  "output_root": "D:/Reports",
+  "output_root": "D:/Office/Reports",
   "collect_extensions": [
     ".xlsx",
     ".xlsm",
@@ -19,10 +19,21 @@
         "run fleet analysis report",
         "fleet analysis report"
       ],
-      "working_directory": "D:/Python Reporting/Fleet Analysis Report",
-      "run_as": "python",
-      "target": "build_report.py",
+      "working_directory": "D:/Office/Scripts/Fleet Analysis Report",
+      "run_as": "exe",
+      "target": "dist/build_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx",
+          ".xlsm",
+          ".xls"
+        ],
+        "stage_dir": "files",
+        "count": 1
+      },
       "collect_from": [
         "dist",
         "output",
@@ -31,7 +42,7 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in Fleet Analysis Report.",
+      "description": "Report generator in Fleet Analysis Report.",
       "alternate": null
     },
     {
@@ -43,10 +54,21 @@
         "run fmo penalties non compliance report",
         "fmo penalties non compliance report"
       ],
-      "working_directory": "D:/Python Reporting/FMO Penalties non Compliance Report",
+      "working_directory": "D:/Office/Scripts/FMO Penalties non Compliance Report",
       "run_as": "exe",
       "target": "dist/fmo_not_imposing_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx",
+          ".txt",
+          ".xlsm"
+        ],
+        "stage_dir": "files",
+        "count": 1
+      },
       "collect_from": [
         "dist",
         "output",
@@ -55,7 +77,7 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in FMO Penalties non Compliance Report.",
+      "description": "Report generator in FMO Penalties non Compliance Report.",
       "alternate": {
         "run_as": "python",
         "target": "fmo_not_imposing_report.py"
@@ -70,10 +92,19 @@
         "run pending complaint analysis report",
         "pending complaint analysis report"
       ],
-      "working_directory": "D:/Python Reporting/Pending Complaint Analysis Report",
+      "working_directory": "D:/Office/Scripts/Pending Complaint Analysis Report",
       "run_as": "exe",
       "target": "dist/generate_complaint_analysis_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx"
+        ],
+        "stage_dir": "files",
+        "count": 4
+      },
       "collect_from": [
         "dist",
         "output",
@@ -82,7 +113,7 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in Pending Complaint Analysis Report.",
+      "description": "Report generator in Pending Complaint Analysis Report.",
       "alternate": {
         "run_as": "python",
         "target": "generate_complaint_analysis_report.py"
@@ -97,10 +128,19 @@
         "run pending penalties report",
         "pending penalties report"
       ],
-      "working_directory": "D:/Python Reporting/Pending Penalties report",
+      "working_directory": "D:/Office/Scripts/Pending Penalties report",
       "run_as": "exe",
       "target": "dist/generate_pending_penalties_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx"
+        ],
+        "stage_dir": "files",
+        "count": 1
+      },
       "collect_from": [
         "dist",
         "output",
@@ -109,7 +149,7 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in Pending Penalties report.",
+      "description": "Report generator in Pending Penalties report.",
       "alternate": {
         "run_as": "python",
         "target": "generate_pending_penalties_report.py"
@@ -124,10 +164,19 @@
         "run pending penalties under 2% report",
         "pending penalties under 2% report"
       ],
-      "working_directory": "D:/Python Reporting/Pending penalties under 2% report",
+      "working_directory": "D:/Office/Scripts/Pending penalties under 2% report",
       "run_as": "exe",
       "target": "dist/generate_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx"
+        ],
+        "stage_dir": "files",
+        "count": 1
+      },
       "collect_from": [
         "dist",
         "output",
@@ -136,62 +185,10 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in Pending penalties under 2% report.",
+      "description": "Report generator in Pending penalties under 2% report.",
       "alternate": {
         "run_as": "python",
         "target": "generate_report.py"
-      }
-    },
-    {
-      "name": "python bot (ped)",
-      "trigger": [
-        "generate python bot (ped) report",
-        "generate python bot (ped)",
-        "create python bot (ped)",
-        "make python bot (ped)",
-        "run python bot (ped)",
-        "python bot (ped)"
-      ],
-      "working_directory": "D:/Office/Scripts/Python Bot (PED)",
-      "run_as": "python",
-      "target": "scrape_ped_report.py",
-      "args": [],
-      "collect_from": [
-        "dist",
-        "output",
-        "."
-      ],
-      "route_output": "day_folder",
-      "collect_mode": "move",
-      "on_conflict": "version",
-      "description": "Report generator discovered in Python Bot (PED).",
-      "alternate": null
-    },
-    {
-      "name": "tmo scoring report",
-      "trigger": [
-        "generate tmo scoring report",
-        "create tmo scoring report",
-        "make tmo scoring report",
-        "run tmo scoring report",
-        "tmo scoring report"
-      ],
-      "working_directory": "D:/Python Reporting/TMO scoring Report",
-      "run_as": "exe",
-      "target": "dist/tmo_report_generator.exe",
-      "args": [],
-      "collect_from": [
-        "dist",
-        "output",
-        "."
-      ],
-      "route_output": "day_folder",
-      "collect_mode": "move",
-      "on_conflict": "version",
-      "description": "Report generator discovered in TMO scoring Report.",
-      "alternate": {
-        "run_as": "python",
-        "target": "tmo_report_generator.py"
       }
     },
     {
@@ -204,10 +201,20 @@
         "run ranking report (complains kpi)",
         "ranking report (complains kpi)"
       ],
-      "working_directory": "D:/Python Reporting/Ranking Report (complains KPI)",
-      "run_as": "python",
-      "target": "scripts/build_report.py",
+      "working_directory": "D:/Office/Scripts/Ranking Report (complains KPI)",
+      "run_as": "exe",
+      "target": "dist/build_report.exe",
       "args": [],
+      "input": {
+        "mode": "arg",
+        "extensions": [
+          ".csv",
+          ".xlsx",
+          ".xlsm"
+        ],
+        "stage_dir": "files",
+        "count": 2
+      },
       "collect_from": [
         "dist",
         "output",
@@ -216,8 +223,53 @@
       "route_output": "day_folder",
       "collect_mode": "move",
       "on_conflict": "version",
-      "description": "Report generator discovered in Ranking Report (complains KPI).",
+      "description": "Report generator in Ranking Report (complains KPI).",
       "alternate": null
+    },
+    {
+      "name": "tmo scoring report",
+      "trigger": [
+        "generate tmo scoring report",
+        "create tmo scoring report",
+        "make tmo scoring report",
+        "run tmo scoring report",
+        "tmo scoring report"
+      ],
+      "working_directory": "D:/Office/Scripts/TMO scoring Report",
+      "run_as": "exe",
+      "target": "dist/tmo_report_generator.exe",
+      "args": [],
+      "input": {
+        "mode": "flag",
+        "flag": "--csv",
+        "extensions": [
+          ".csv",
+          ".xlsx",
+          ".xlsm",
+          ".xls"
+        ],
+        "stage_dir": "files",
+        "count": 1,
+        "date_flags": {
+          "from": "--from-date",
+          "to": "--to-date"
+        },
+        "date_format": "%Y-%m-%d",
+        "ask_dates": true
+      },
+      "collect_from": [
+        "dist",
+        "output",
+        "."
+      ],
+      "route_output": "day_folder",
+      "collect_mode": "move",
+      "on_conflict": "version",
+      "description": "Report generator in TMO scoring Report.",
+      "alternate": {
+        "run_as": "python",
+        "target": "tmo_report_generator.py"
+      }
     }
   ]
 }

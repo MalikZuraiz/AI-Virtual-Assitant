@@ -36,8 +36,18 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         if service is None:
             ctx.store.append("reminders", "reminders", reminder.to_json())
             return f"Saved: {reminder.describe()} (scheduler isn't running, so it'll start on next launch)."
+
         service.add(reminder)
-        return f"Got it - {reminder.describe()}."
+        # Always report the *scheduled* moment, not just what was parsed - a
+        # time read as 02:14 instead of 14:14 is then obvious right away
+        # rather than at the moment it fails to go off.
+        next_run = service.next_run_for(reminder)
+        if next_run is None:
+            return (
+                f"Saved '{reminder.text}', but it isn't scheduled - the time may already "
+                f"have passed. Say 'list reminders' to check."
+            )
+        return f"Got it - {reminder.describe()}.\nNext: {next_run:%a %d %b at %H:%M}."
 
     @router.register(
         "list reminders",

@@ -163,11 +163,14 @@ def run_report(
     extra_args: list[str] | None = None,
     on_output: Callable[[str], None] | None = None,
     when: datetime | None = None,
+    show_console: bool = False,
 ) -> ReportRun:
     """Run one ``reports.json`` entry and file its output into today's folder."""
     runnable = Runnable.from_entry(entry)
     if extra_args:
         runnable.args = [*runnable.args, *extra_args]
+    if show_console:
+        runnable.console = True
     result = ReportRun(name=runnable.name)
 
     exts = list(entry.get("extensions") or extensions)

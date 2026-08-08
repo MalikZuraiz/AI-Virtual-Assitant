@@ -22,7 +22,10 @@ from assistant.store.store import ConfigStore
 
 def register_all(router: CommandRouter, store: ConfigStore) -> CommandRouter:
     """Attach every pack to ``router``. Order only affects help output."""
-    from assistant.commands import links, media, meta, projects, reminders, reportpack, scriptpack
+    from assistant.commands import (
+        chat, excel, links, media, meta, projects, reminders, reportpack,
+        scriptpack, tools, vision,
+    )
 
     meta.register(router, store)
     links.register(router, store)
@@ -31,5 +34,9 @@ def register_all(router: CommandRouter, store: ConfigStore) -> CommandRouter:
     projects.register(router, store)
     media.register(router, store)
     reminders.register(router, store)
+    chat.register(router, store)
+    excel.register(router, store)
+    tools.register(router, store)
+    vision.register(router, store)
     router.rebuild()
     return router

@@ -63,6 +63,10 @@ def _run_entry(entry: dict, text: str, ctx) -> str:
         )
         return result.summary()
 
+    # An entry that says console:false means it - launching VS Code does not
+    # want a terminal flashing up behind it.
+    if "console" not in entry and ctx.store.value("core", "behaviour.show_terminals", True):
+        runnable.console = True
     ctx.progress(f"Running '{runnable.name}'...")
     result = execute(runnable, on_output=ctx.progress)
     after = entry.get("after") or {}

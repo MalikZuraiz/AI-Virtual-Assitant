@@ -12,6 +12,7 @@ Two things this pack is careful about:
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from assistant.core.router import CommandRouter, make_command
 from assistant.core.runner import execute, Runnable
+from assistant.core.selection import Choice, offer
 from assistant.store.store import ConfigStore
 
 PY_MAIN = '''"""{name}."""
@@ -41,6 +43,110 @@ __pycache__/
 dist/
 build/
 """
+
+#: Scripts that are never the thing you meant by "run this project".
+_NOT_ENTRY_POINTS = {"setup.py", "conftest.py", "config.py", "__init__.py"}
+
+
+def _report_entry_for(path: Path, store: ConfigStore) -> dict | None:
+    """The reports.json entry whose working_directory is ``path``, if any."""
+    wanted = path.resolve()
+    for entry in store.items("reports", "reports"):
+        raw = entry.get("working_directory")
+        if not raw:
+            continue
+        try:
+            if Path(raw).resolve() == wanted:
+                return entry
+        except OSError:
+            continue
+    return None
+
+
+def _runnables_in(path: Path) -> list[tuple[str, Path]]:
+    """What could be run inside a project, best first: exe, then scripts."""
+    found: list[tuple[str, Path]] = []
+    dist = path / "dist"
+    if dist.is_dir():
+        for exe in sorted(dist.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True):
+            found.append(("exe", exe))
+    for base in (path, path / "scripts", path / "src"):
+        if not base.is_dir():
+            continue
+        scripts = [
+            p for p in base.glob("*.py")
+            if p.is_file() and p.name not in _NOT_ENTRY_POINTS and not p.name.startswith("_")
+        ]
+        found.extend(("python", p) for p in sorted(scripts, key=lambda p: p.stat().st_size, reverse=True))
+    return found
+
+
+def run_project_at(path: Path, ctx) -> str:
+    """Run what's inside a project folder - the exe if it was built.
+
+    "run 3" on a listing should *run* the thing, not drop you at a prompt in
+    its folder. A registered report goes through the full report pipeline
+    (input file, then output filed into today's folder); anything else runs
+    its newest ``dist/*.exe``, falling back to its main script under the
+    project's own virtualenv.
+    """
+    if not path.is_dir():
+        return f"{path} is gone - say 'rescan projects' to clean that up."
+
+    entry = _report_entry_for(path, ctx.store)
+    if entry is not None:
+        from assistant.commands.reportpack import run_with_input
+
+        return run_with_input(entry, ctx)
+
+    options = _runnables_in(path)
+    if not options:
+        return (
+            f"There's nothing obvious to run in {path.name} - no dist\\*.exe and no "
+            f"top-level script. Say 'terminal' and the number for a shell there instead."
+        )
+
+    if len(options) > 1:
+        def _pick(choice, inner_ctx) -> str:
+            kind, target = choice.payload
+            return _execute(path, kind, Path(target), inner_ctx)
+
+        return offer(
+            ctx,
+            f"What should I run in {path.name}?",
+            [
+                Choice(target.name, (kind, str(target)), "built exe" if kind == "exe" else "script")
+                for kind, target in options
+            ],
+            actions={"run": _pick, "open": _pick, "use": _pick},
+            default_action="run",
+            hint="Say a number to run it.",
+        )
+
+    kind, target = options[0]
+    return _execute(path, kind, target, ctx)
+
+
+def _execute(project: Path, kind: str, target: Path, ctx) -> str:
+    ctx.progress(f"Running {target.name} in {project.name}...")
+    result = execute(
+        Runnable(
+            name=target.name,
+            run_as=kind,
+            target=str(target),
+            working_directory=str(project),
+            timeout=3600,
+            console=bool(ctx.store.value("core", "behaviour.show_terminals", True)),
+        ),
+        on_output=ctx.progress,
+    )
+    head = (
+        f"{target.name} finished in {result.duration:.0f}s."
+        if result.ok
+        else f"{target.name} exited with code {result.returncode}."
+    )
+    tail = result.tail()
+    return f"{head}\n{tail}" if tail else head
 
 
 def _dir_for(store: ConfigStore, kind: str) -> Path:
@@ -209,20 +315,86 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
 
     @router.register(
         "list projects",
-        keywords=("list projects", "my projects", "what projects", "show projects"),
-        help="Lists every registered project.",
+        pattern=r"^\s*(?:list|show|what)\s+(?:my\s+)?(python|flutter|wordpress|all)?\s*projects\s*$",
+        keywords=(
+            "list projects", "my projects", "what projects", "show projects",
+            "list python projects", "list flutter projects", "list wordpress projects",
+        ),
+        help="list projects / list python projects  -  numbered, then say '3' or 'vs code 3'.",
         category="projects",
         instant=True,
     )
     def cmd_list_projects(text, ctx):
-        entries = ctx.store.items("projects", "projects")
+        kind_match = re.search(r"(python|flutter|wordpress)", text, re.IGNORECASE)
+        wanted = kind_match.group(1).lower() if kind_match else None
+
+        entries = [
+            e for e in ctx.store.items("projects", "projects")
+            if not wanted or str(e.get("type", "")).lower() == wanted
+        ]
         if not entries:
-            return "No projects registered yet. Try 'register python project x at D:/path'."
-        lines = [f"{len(entries)} registered project(s):"]
-        for entry in sorted(entries, key=lambda e: str(e.get("name", ""))):
-            exists = "" if Path(str(entry.get("path"))).exists() else "   [missing!]"
-            lines.append(f"  - {entry.get('name')} ({entry.get('type')}): {entry.get('path')}{exists}")
-        return "\n".join(lines)
+            which = f"{wanted} " if wanted else ""
+            return (
+                f"No {which}projects registered. Try 'rescan projects', or "
+                "'register python project x at D:/path'."
+            )
+
+        def _open(choice, inner_ctx) -> str:
+            path = Path(choice.payload)
+            if not path.is_dir():
+                return f"{path} is gone - say 'rescan projects' to clean that up."
+            inner_ctx.store.set_value("core", "last_active_path", path.as_posix())
+            return _open_in_editor(path)
+
+        def _folder(choice, inner_ctx) -> str:
+            path = Path(choice.payload)
+            os.startfile(str(path))  # noqa: S606
+            return f"Opened {path} in Explorer."
+
+        def _run(choice, inner_ctx) -> str:
+            return run_project_at(Path(choice.payload), inner_ctx)
+
+        def _terminal(choice, inner_ctx) -> str:
+            path = Path(choice.payload)
+            subprocess.Popen(["cmd.exe", "/c", "start", "cmd.exe", "/k", f"cd /d {path}"], shell=False)  # noqa: S603
+            return f"Opened a terminal in {path.name}."
+
+        choices = [
+            Choice(
+                str(entry.get("name")),
+                str(entry.get("path")),
+                f"({entry.get('type')})" + ("" if Path(str(entry.get("path"))).is_dir() else "  [missing!]"),
+            )
+            for entry in sorted(entries, key=lambda e: str(e.get("name", "")))
+        ]
+        label = f"{len(choices)} {wanted or 'registered'} project(s):"
+        return offer(
+            ctx,
+            label,
+            choices,
+            actions={
+                "open": _open, "code": _open, "use": _open,
+                "folder": _folder, "run": _run, "terminal": _terminal,
+            },
+            default_action="open",
+            hint=(
+                "Say a number to open it in VS Code, 'run 3' to actually run it, "
+                "'folder 3' for Explorer, 'terminal 3' for a shell there."
+            ),
+        )
+
+    @router.register(
+        "rescan projects",
+        keywords=("rescan projects", "refresh projects", "find my projects", "scan projects"),
+        help="Re-scans your project folders and drops anything that moved.",
+        category="projects",
+    )
+    def cmd_rescan_projects(text, ctx):
+        from assistant.store.bootstrap import seed_from_machine
+
+        summary = seed_from_machine(ctx.store).summary()
+        ctx.router.rebuild()
+        return summary
 
     @router.register(
         "run project",

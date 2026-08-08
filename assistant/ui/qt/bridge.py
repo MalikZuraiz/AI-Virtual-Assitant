@@ -36,6 +36,8 @@ class AssistantBridge(QObject):
     noticed = pyqtSignal(str)
     #: text (a reminder firing)
     reminded = pyqtSignal(str)
+    #: the answer-so-far, replacing the live bubble each time
+    streamed = pyqtSignal(str)
 
     _KIND_TO_SIGNAL = {
         "reply": "replied",
@@ -44,6 +46,7 @@ class AssistantBridge(QObject):
         "progress": "progressed",
         "notice": "noticed",
         "reminder": "reminded",
+        "stream": "streamed",
     }
 
     def publish(self, event: AssistantEvent) -> None:

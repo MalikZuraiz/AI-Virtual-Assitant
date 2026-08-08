@@ -2,13 +2,13 @@
   "_comment": "Entertainment libraries. 'play <name>' searches these folders.",
   "libraries": {
     "movies": [
-      "D:/Movies",
       "D:/Entertainment/Movies"
     ],
     "series": [
       "D:/Entertainment/Series"
     ],
     "music": [
+      "D:/Entertainment/Music",
       "C:/Users/Windows/Music"
     ],
     "clips": [

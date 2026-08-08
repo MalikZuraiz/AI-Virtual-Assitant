@@ -29,8 +29,8 @@ through chat), say `refresh`, and it works. No restart, no code change.
 Global hotkeys: **Ctrl+Alt+Space** summons the window, **Ctrl+Shift+Space** is
 push-to-talk.
 
-Full architecture, the config reference and the command list:
-**[docs/ASSISTANT_GUIDE.md](docs/ASSISTANT_GUIDE.md)**.
+**[docs/COMMANDS.md](docs/COMMANDS.md)** — every command, hotkeys and gestures.
+**[docs/ASSISTANT_GUIDE.md](docs/ASSISTANT_GUIDE.md)** — architecture and design notes.
 Original spec: [docs/assistant-project-brief.md](docs/assistant-project-brief.md).
 
 No paid APIs anywhere — TTS is edge-tts (free, keyless), STT is faster-whisper

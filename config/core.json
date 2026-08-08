@@ -8,10 +8,11 @@
     "flutter_projects_dir": "D:/Office/Projects/Flutter",
     "python_projects_dir": "D:/Office/Projects/Python",
     "scripts_dir": "D:/Office/Scripts",
-    "reports_root": "D:/Reports",
-    "data_dir": "D:/PED DATA EXTRACTIONS",
-    "documents_dir": "C:/Users/Windows/Documents",
-    "downloads_dir": "C:/Users/Windows/Downloads"
+    "reports_root": "D:/Office/Reports",
+    "data_dir": "D:/Office/PED DATA EXTRACTIONS",
+    "documents_dir": "D:/Office/Documents",
+    "downloads_dir": "C:/Users/Windows/Downloads",
+    "wordpress_projects_dir": "D:/Office/Projects/WordPress"
   },
   "day_folder": {
     "_comment": "Tokens: {d} {dd} {month} {mon} {m} {mm} {yyyy} {yy} {weekday}",
@@ -30,7 +31,17 @@
   "behaviour": {
     "speak_replies": true,
     "confirm_destructive": true,
-    "fuzzy_match_threshold": 82
+    "fuzzy_match_threshold": 82,
+    "show_terminals": true
   },
-  "last_active_path": null
+  "llm": {
+    "_comment": "Optional local-only fallback for open chat (never for actions). Install Ollama, pull a small quantised model, flip enabled to true, then say 'refresh'. Leave off until you have the RAM headroom.",
+    "enabled": true,
+    "provider": "ollama",
+    "base_url": "http://localhost:11434",
+    "model": "qwen2.5:1.5b-instruct",
+    "prefix": "nova",
+    "history_turns": 6
+  },
+  "last_active_path": "D:/Entertainment/Movies/Interstellar (2014) (2014) [1080p]"
 }

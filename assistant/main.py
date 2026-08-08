@@ -24,11 +24,27 @@ from assistant.logging_setup import setup_logging
 def _run_cli(config: AppConfig) -> int:
     from assistant.core.assistant import Assistant, AssistantEvent
 
+    # A Windows console is often cp1252, and the local model happily returns
+    # emoji. Printing one then raises UnicodeEncodeError and kills the REPL,
+    # so reconfigure the stream where possible and replace what still fails.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     prefix = {"user": "you", "pending": "...", "progress": "   ", "error": "!!"}
 
     def on_event(event: AssistantEvent) -> None:
+        if event.kind == "stream":
+            return  # the finished reply follows; don't print it twice
         tag = prefix.get(event.kind, config.assistant_name.lower())
-        print(f"{tag}: {event.text}")
+        text = event.text
+        try:
+            print(f"{tag}: {text}")
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, "encoding", "ascii") or "ascii"
+            print(f"{tag}: {text.encode(encoding, 'replace').decode(encoding)}")
 
     assistant = Assistant(config, on_event)
     print(assistant.start())

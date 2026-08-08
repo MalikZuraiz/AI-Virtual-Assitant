@@ -13,6 +13,7 @@ import pytest
 from assistant.commands import register_all
 from assistant.core.conversation import ConversationState
 from assistant.core.router import CommandRouter
+from assistant.core.selection import SelectionState
 from assistant.store.store import ConfigStore
 
 
@@ -20,14 +21,22 @@ from assistant.store.store import ConfigStore
 def env(tmp_path):
     """A store + router + minimal ctx, with no real machine paths involved."""
     store = ConfigStore(tmp_path / "config")
+    # Point every machine-specific folder at the tmp dir, so these tests
+    # never read the real Downloads folder or the real D: drive.
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    store.set_value("core", "defaults.downloads_dir", downloads.as_posix())
+    store.set_value("core", "defaults.search_roots", [str(tmp_path)])
     router = CommandRouter()
     register_all(router, store)
     ctx = types.SimpleNamespace(
         store=store,
         router=router,
         conversation=ConversationState(),
+        selection=SelectionState(),
         progress=lambda _text: None,
         jobs=None,
+        llm=None,
     )
     return store, router, ctx
 
@@ -36,6 +45,10 @@ def _say(router, ctx, text: str) -> str:
     """Route one message the way Assistant.handle would, minus the queue."""
     if ctx.conversation.active:
         return ctx.conversation.feed(text)
+    if ctx.selection.active:
+        picked = ctx.selection.resolve(text, ctx)
+        if picked is not None:
+            return picked
     match = router.match(text)
     assert match is not None, f"nothing matched {text!r}"
     return router.run(match.command, text, ctx).text
@@ -193,14 +206,40 @@ def test_report_entries_become_commands_with_their_triggers(env):
     assert match.command.priority > 5
 
 
-def test_list_reports_names_todays_destination(env):
+def test_list_reports_is_numbered_and_names_todays_destination(env, tmp_path):
     store, router, ctx = env
-    store.set_value("reports", "output_root", "D:/Reports")
-    store.append("reports", "reports", {"name": "x report", "trigger": ["generate x report"]})
+    store.set_value("reports", "output_root", str(tmp_path / "Reports"))
+    for name in ("x report", "y report"):
+        store.append("reports", "reports", {"name": name, "trigger": [f"generate {name}"]})
     router.rebuild()
+
     reply = _say(router, ctx, "list reports")
-    assert "x report" in reply
+
+    assert "1. x report" in reply
+    assert "2. y report" in reply
     assert "Reports" in reply
+    assert ctx.selection.active
+
+
+def test_a_single_match_runs_straight_away_instead_of_asking(env):
+    """Being asked to choose between one option and nothing is pure friction."""
+    store, router, ctx = env
+    ran = []
+    store.append(
+        "scripts", "commands",
+        {"name": "only one", "trigger": ["do the only thing"], "run_as": "shell", "target": "echo hi"},
+    )
+    router.rebuild()
+
+    from assistant.core.selection import Choice, offer
+
+    reply = offer(
+        ctx, "Pick one:", [Choice("solo", "payload")],
+        actions={"open": lambda c, _cx: ran.append(c.payload) or "did it"},
+    )
+    assert reply == "did it"
+    assert ran == ["payload"]
+    assert not ctx.selection.active
 
 
 # -- meta --------------------------------------------------------------------

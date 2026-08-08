@@ -1,13 +1,13 @@
 """Main CustomTkinter application window.
 
-Threading model: background work (command dispatch, mic capture, the
-virtual-mouse camera loop) never touches Tkinter widgets directly - Tkinter
-is not thread-safe. Background threads only push events onto ``self._events``
-(a plain ``queue.Queue``); a single ``after()``-scheduled poller draining
-that queue on the main thread is the only code that touches widgets. This
-is what keeps the UI responsive and avoids the frame-rate/reliability
-problems in the legacy ``virtual mouse.py`` (which ran everything on one
-blocking loop with no separation between capture and any UI).
+This is the fallback window, kept reachable via ``--legacy-ui``. The Qt HUD
+in ``assistant/ui/qt/`` is the real front-end.
+
+Threading model: background work (command dispatch, mic capture) never
+touches Tkinter widgets directly - Tkinter is not thread-safe. Background
+threads only push events onto ``self._events`` (a plain ``queue.Queue``); a
+single ``after()``-scheduled poller draining that queue on the main thread
+is the only code that touches widgets.
 
 Visuals: the sidebar's avatar and the startup splash reuse the animated
 GIFs already sitting in the repo's ``GUI/`` folder from the original
@@ -80,8 +80,6 @@ class App(ctk.CTk):
         self.minsize(900, 620)
 
         self._events: "queue.Queue[tuple]" = queue.Queue()
-        self._vm_frame_lock = threading.Lock()
-        self._vm_latest_frame = None
         self._mic_busy = False
 
         # Show the splash immediately, floating on top of the (still empty)
@@ -101,9 +99,6 @@ class App(ctk.CTk):
         self._splash_tick(splash, splash_gif, 3)
 
         self.ctx = Context.build(config, self.store, self.router, self.jobs)
-        self.ctx.set_virtual_mouse_hooks(
-            on_frame=self._push_vm_frame, on_status=self._push_vm_status
-        )
         self.ctx.listener = SpeechListener()
         self.ctx.confirm = self._confirm_blocking
         self._splash_tick(splash, splash_gif, 8)
@@ -204,14 +199,6 @@ class App(ctk.CTk):
             )
 
         ctk.CTkFrame(sidebar, height=2, fg_color="gray30").pack(fill="x", padx=16, pady=12)
-
-        self.vm_toggle_btn = ctk.CTkButton(
-            sidebar, text="Start Virtual Mouse", command=self._on_vm_toggle
-        )
-        self.vm_toggle_btn.pack(padx=16, pady=4, fill="x")
-
-        self.vm_preview = ctk.CTkLabel(sidebar, text="Virtual mouse is off", height=140)
-        self.vm_preview.pack(padx=16, pady=(0, 10), fill="x")
 
         ctk.CTkButton(
             sidebar, text="Help", fg_color="transparent", border_width=1,
@@ -378,25 +365,6 @@ class App(ctk.CTk):
             self.avatar_idle.place(relx=0.5, rely=0.5, anchor="center")
             self.avatar_idle.start()
 
-    # --------------------------------------------------------- virtual mouse
-    def _on_vm_toggle(self) -> None:
-        threading.Thread(target=self._toggle_vm_worker, daemon=True).start()
-
-    def _toggle_vm_worker(self) -> None:
-        if self.ctx.virtual_mouse.running:
-            response = self.ctx.virtual_mouse.stop()
-        else:
-            response = self.ctx.virtual_mouse.start()
-        self._emit_response(response)
-        self._events.put(("vm_state", self.ctx.virtual_mouse.running))
-
-    def _push_vm_frame(self, frame) -> None:
-        with self._vm_frame_lock:
-            self._vm_latest_frame = frame
-
-    def _push_vm_status(self, status: str) -> None:
-        self._events.put(("status", status))
-
     # ------------------------------------------------------------ settings
     def _open_settings(self) -> None:
         SettingsDialog(self, self.config_, on_saved=self._on_settings_saved)
@@ -429,13 +397,6 @@ class App(ctk.CTk):
                     self._mic_busy = False
                     self.mic_btn.configure(text="Mic", state="normal")
                     self._show_idle_avatar()
-                elif kind == "vm_state":
-                    running = event[1]
-                    self.vm_toggle_btn.configure(
-                        text="Stop Virtual Mouse" if running else "Start Virtual Mouse"
-                    )
-                    if not running:
-                        self.vm_preview.configure(image=None, text="Virtual mouse is off")
                 elif kind == "confirm":
                     _, prompt, result, ev = event
                     result["value"] = messagebox.askyesno("Please confirm", prompt, parent=self)
@@ -443,26 +404,7 @@ class App(ctk.CTk):
         except queue.Empty:
             pass
 
-        if self.ctx.virtual_mouse.running:
-            self._refresh_vm_preview()
-
         self.after(40, self._poll_events)
-
-    def _refresh_vm_preview(self) -> None:
-        with self._vm_frame_lock:
-            frame = self._vm_latest_frame
-            self._vm_latest_frame = None
-        if frame is None:
-            return
-        try:
-            from PIL import Image
-
-            rgb = frame[:, :, ::-1]
-            image = Image.fromarray(rgb)
-            ctk_image = ctk.CTkImage(light_image=image, dark_image=image, size=(160, 120))
-            self.vm_preview.configure(image=ctk_image, text="")
-        except Exception:
-            logger.exception("Failed to render virtual mouse preview frame")
 
     def _tick_status_bar(self) -> None:
         try:
@@ -489,8 +431,6 @@ class App(ctk.CTk):
 
     def _on_close(self) -> None:
         try:
-            if self.ctx.virtual_mouse.running:
-                self.ctx.virtual_mouse.stop()
             self.ctx.tts.stop()
             self.config_.save()
         finally:

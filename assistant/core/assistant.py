@@ -22,6 +22,7 @@ from assistant.core.context import Context
 from assistant.core.jobs import JobEvent, JobRunner, JobState
 from assistant.core.reminders import Reminder, ReminderService
 from assistant.core.router import CommandRouter, Reply
+from assistant.core.selection import parse_pick
 from assistant.core.voice import TextToSpeech
 from assistant.integrations.llm import LocalLLM
 from assistant.store.bootstrap import seed_from_machine
@@ -83,6 +84,14 @@ class Assistant:
 
         self.llm = LocalLLM.from_config(self.store)
         self.ctx.llm = self.llm
+        # Gestures bound to ``action: command`` re-enter here, so a gesture
+        # can do anything a typed command can.
+        self.ctx.run_command = self.handle
+        # Streaming answers bypass the job-progress channel: progress is
+        # transient status, this is the reply itself arriving in pieces.
+        self.ctx.on_stream = lambda text: self._emit(
+            AssistantEvent("stream", text, speak=False)
+        )
 
         self.store.on_refresh(self._on_config_refresh)
 
@@ -110,6 +119,10 @@ class Assistant:
 
     def set_notifier(self, fn: Callable[[str, str], None]) -> None:
         self.ctx.notify = fn
+
+    def set_listener_control(self, fn: Callable[[str], str]) -> None:
+        """The UI owns the microphone; commands ask it to start/stop via this."""
+        self.ctx.listener_control = fn
 
     # -- lifecycle --------------------------------------------------------
     def start(self, *, scaffold: bool = True) -> str:
@@ -158,6 +171,17 @@ class Assistant:
         if self.ctx.conversation.active:
             reply = self.ctx.conversation.feed(text)
             self._emit(AssistantEvent("reply", reply, speak=True))
+            return
+
+        # A parked numbered list answers a bare "3" or "vs code 3". Only a
+        # pure pick is intercepted, so ordinary commands still route normally
+        # even while a list is on screen.
+        if self.ctx.selection.active and parse_pick(text) is not None:
+            # A pick can kick off real work (merging two 120MB exports, running
+            # a report), so acknowledge it the same way a command is
+            # acknowledged - otherwise the chat sits silent and it looks hung.
+            self._emit(AssistantEvent("pending", "Working on that...", speak=False))
+            self.jobs.submit("your pick", self._make_pick_job(text), priority=2)
             return
 
         match = self.router.match(text)
@@ -218,6 +242,19 @@ class Assistant:
 
         return _run
 
+    def _make_pick_job(self, text: str):
+        def _run(handle) -> str:
+            self.ctx.bind_job(handle)
+            try:
+                reply = self.ctx.selection.resolve(text, self.ctx)
+                if reply:
+                    self._emit(AssistantEvent("reply", reply, speak=True, job_id=handle.id))
+            finally:
+                self.ctx.bind_job(None)
+            return ""
+
+        return _run
+
     # -- events -----------------------------------------------------------
     def _emit(self, event: AssistantEvent) -> None:
         if event.speak and event.text:
@@ -238,6 +275,5 @@ class Assistant:
             self._emit(AssistantEvent("notice", f"'{event.title}' cancelled.", job_id=event.job_id))
 
     def _on_reminder(self, reminder: Reminder) -> None:
-        message = f"Reminder: {reminder.text}"
-        self.ctx.notify(self.config.assistant_name, reminder.text)
-        self._emit(AssistantEvent("reminder", message, speak=True))
+        self.ctx.notify(f"{self.config.assistant_name} · Reminder", reminder.text)
+        self._emit(AssistantEvent("reminder", f"Reminder: {reminder.text}", speak=True))

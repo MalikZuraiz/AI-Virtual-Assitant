@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from assistant.core.router import CommandRouter
+from assistant.core.selection import Choice, offer
 from assistant.store.store import ConfigStore
 
 try:
@@ -104,31 +105,135 @@ def _kind_from_text(text: str, default: str = "movies") -> str:
     return default
 
 
+def _all_extensions(store: ConfigStore) -> set[str]:
+    media = store.get("media")
+    return {
+        e.lower()
+        for key in ("video_extensions", "audio_extensions")
+        for e in (media.get(key) or [])
+    }
+
+
+def _search_everything(
+    store: ConfigStore,
+    query: str,
+    kind: str = "",
+    limit: int = 25,
+) -> list[Path]:
+    """Every playable file matching ``query`` across all libraries.
+
+    Searches *files*, not folders, because that is what actually gets opened -
+    and it searches audio and video together unless a kind word narrows it,
+    since "play interstellar" shouldn't care which library it lives in.
+    """
+    libraries = _libraries(store)
+    kinds = [kind] if kind and kind in libraries else list(libraries)
+    exts = _all_extensions(store) if not kind else _extensions(store, kind)
+    needle = _clean(query)
+
+    seen: set[Path] = set()
+    scored: list[tuple[float, Path]] = []
+    for one in kinds:
+        for root in libraries.get(one, []):
+            if not root.is_dir():
+                continue
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in exts:
+                    continue
+                if path in seen:
+                    continue
+                seen.add(path)
+                if not needle:
+                    scored.append((100.0, path))
+                    continue
+                # Match on the file name *and* its folder, because films are
+                # usually "<Movie Folder>/somefile.mkv" where the useful name
+                # is the folder's.
+                best = max(
+                    _score(needle, _clean(path.stem)),
+                    _score(needle, _clean(path.parent.name)),
+                )
+                if best >= 62:
+                    scored.append((best, path))
+
+    scored.sort(key=lambda t: (-t[0], len(str(t[1]))))
+    return [path for _score_value, path in scored[:limit]]
+
+
+def _offer_hits(ctx, hits: list[Path], title: str) -> str:
+    def _play(choice, _ctx) -> str:
+        target = Path(choice.payload)
+        os.startfile(str(target))  # noqa: S606
+        return f"Playing {target.name}."
+
+    def _folder(choice, _ctx) -> str:
+        target = Path(choice.payload).parent
+        os.startfile(str(target))  # noqa: S606
+        return f"Opened {target}."
+
+    choices = [
+        Choice(
+            path.stem if path.parent.name in {"Movies", "Music", "Series", "Funny Clips"} else path.parent.name,
+            path,
+            f"{path.suffix.lstrip('.')} · {path.stat().st_size / (1024 * 1024):.0f} MB",
+        )
+        for path in hits
+    ]
+    return offer(
+        ctx,
+        title,
+        choices,
+        actions={"play": _play, "open": _play, "use": _play, "folder": _folder},
+        default_action="play",
+        hint="Say a number to play it, or 'folder 3' to open where it lives.",
+    )
+
+
+def _no_library_message(store: ConfigStore) -> str:
+    roots = {str(p) for paths in _libraries(store).values() for p in paths}
+    return (
+        "Your media libraries are empty or missing.\n"
+        f"Configured: {', '.join(sorted(roots)) or 'nothing'}\n"
+        "Add one with: add movies folder D:/Entertainment/Movies"
+    )
+
+
 def register(router: CommandRouter, store: ConfigStore) -> None:
     @router.register(
-        "play media",
-        pattern=r"^\s*(?:play|watch|put on)\s+(?:the\s+)?(?:movie|film|series|show|episode|anime|song|track|clip|video)\s+(.+?)\s*$",
-        help="play movie interstellar  /  play song bohemian rhapsody  /  play clip <name>",
+        "play",
+        pattern=(
+            r"^\s*(?:play|watch|put on)\s*"
+            r"(?:the\s+)?(?:movie|film|series|show|episode|anime|song|track|music|clip|video)?\s*(.*?)\s*$"
+        ),
+        help="play interstellar  -  searches every library (video and audio) and lists matches to pick from.",
         category="entertainment",
         priority=4,
     )
     def cmd_play(text, ctx):
         query = re.search(
-            r"(?:play|watch|put on)\s+(?:the\s+)?(?:movie|film|series|show|episode|anime|song|track|clip|video)\s+(.+?)\s*$",
+            r"^\s*(?:play|watch|put on)\s*"
+            r"(?:the\s+)?(?:movie|film|series|show|episode|anime|song|track|music|clip|video)?\s*(.*?)\s*$",
             text,
             re.IGNORECASE,
         ).group(1).strip()
-        kind = _kind_from_text(text)
-        match, near = _find(ctx.store, kind, query)
-        if match is None:
-            hint = f" Closest I have: {', '.join(near)}." if near else ""
-            return f"Nothing in your {kind} library matches '{query}'.{hint}"
-        target = _playable(match, _extensions(ctx.store, kind))
-        if target is None:
-            os.startfile(str(match))  # noqa: S606
-            return f"'{match.name}' has no playable file directly inside, so I opened the folder."
-        os.startfile(str(target))  # noqa: S606
-        return f"Playing {target.name}."
+
+        # A bare "play" means "show me what I have", not an error.
+        if not query:
+            hits = _search_everything(ctx.store, "", limit=30)
+            if not hits:
+                return _no_library_message(ctx.store)
+            return _offer_hits(ctx, hits, "Everything in your libraries:")
+
+        # A kind word ("play song x") narrows the search; without one it
+        # searches audio and video together, which is what "play <name>"
+        # almost always means.
+        kind = _kind_from_text(text, default="")
+        hits = _search_everything(ctx.store, query, kind=kind, limit=25)
+        if not hits:
+            near = _search_everything(ctx.store, "", limit=6)
+            hint = f"\nYou do have: {', '.join(h.name for h in near[:5])}" if near else ""
+            return f"Nothing matching '{query}' in your libraries.{hint}"
+        return _offer_hits(ctx, hits, f"{len(hits)} match(es) for '{query}':")
 
     @router.register(
         "list library",

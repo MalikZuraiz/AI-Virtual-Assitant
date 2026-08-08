@@ -61,22 +61,6 @@ class SettingsDialog(ctk.CTkToplevel):
             variable=self.confirm_var,
         ).pack(anchor="w", pady=(6, 0))
 
-        ctk.CTkLabel(self, text="Virtual mouse sensitivity").pack(anchor="w", **pad)
-        sensitivity_row = ctk.CTkFrame(self, fg_color="transparent")
-        sensitivity_row.pack(fill="x", padx=16)
-        self.sensitivity_value_label = ctk.CTkLabel(sensitivity_row, text="", width=36)
-        self.sensitivity_value_label.pack(side="right")
-        self.sensitivity_slider = ctk.CTkSlider(
-            sensitivity_row, from_=1.0, to=3.0, number_of_steps=40, command=self._on_sensitivity_change
-        )
-        self.sensitivity_slider.set(config.virtual_mouse_sensitivity)
-        self.sensitivity_slider.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self._on_sensitivity_change(config.virtual_mouse_sensitivity)
-        ctk.CTkLabel(
-            self, text="Higher = smaller hand movements cover the whole screen (raise this if you can't reach the edges).",
-            text_color="gray60", font=ctk.CTkFont(size=11), wraplength=480, justify="left",
-        ).pack(anchor="w", padx=16)
-
         ctk.CTkLabel(self, text="Custom apps (one per line: name=path)").pack(anchor="w", **pad)
         self.apps_box = ctk.CTkTextbox(self, height=110)
         self.apps_box.insert("1.0", "\n".join(f"{k}={v}" for k, v in config.apps.items()))
@@ -94,9 +78,6 @@ class SettingsDialog(ctk.CTkToplevel):
             button_row, text="Cancel", fg_color="transparent", border_width=1, command=self.destroy
         ).pack(side="right", padx=(0, 8))
 
-    def _on_sensitivity_change(self, value) -> None:
-        self.sensitivity_value_label.configure(text=f"{float(value):.1f}x")
-
     def _browse_music(self) -> None:
         folder = filedialog.askdirectory(initialdir=self.music_entry.get() or None)
         if folder:
@@ -111,7 +92,6 @@ class SettingsDialog(ctk.CTkToplevel):
         self.config.voice_replies_enabled = self.voice_replies_var.get()
         self.config.voice_input_enabled = self.voice_input_var.get()
         self.config.require_confirmation_for_destructive = self.confirm_var.get()
-        self.config.virtual_mouse_sensitivity = round(float(self.sensitivity_slider.get()), 2)
 
         apps = {}
         for line in self.apps_box.get("1.0", "end").splitlines():

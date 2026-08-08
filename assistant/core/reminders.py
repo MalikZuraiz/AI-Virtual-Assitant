@@ -128,18 +128,54 @@ class Reminder:
         return when < datetime.now()
 
 
-def _split_time(value: str) -> tuple[int, int]:
+def split_time(value: str) -> tuple[int, int, bool]:
+    """Parse a time. Returns ``(hour, minute, was_explicit)``.
+
+    ``was_explicit`` is False when the user gave no am/pm and an hour of
+    1-12, i.e. "2:14" could mean either. Callers resolve that ambiguity with
+    :func:`disambiguate_hour`; treating it as 02:14 unconditionally is why a
+    reminder set at ten-to-two in the afternoon silently scheduled itself for
+    two in the morning.
+    """
     match = re.match(r"^\s*(\d{1,2})[:.]?(\d{2})?\s*(am|pm)?\s*$", str(value), re.IGNORECASE)
     if not match:
-        return 9, 0
+        return 9, 0, True
     hour = int(match.group(1))
     minute = int(match.group(2) or 0)
     meridiem = (match.group(3) or "").lower()
-    if meridiem == "pm" and hour < 12:
-        hour += 12
-    if meridiem == "am" and hour == 12:
-        hour = 0
-    return min(hour, 23), min(minute, 59)
+    if meridiem == "pm":
+        hour = hour % 12 + 12
+        return min(hour, 23), min(minute, 59), True
+    if meridiem == "am":
+        hour = 0 if hour == 12 else hour
+        return min(hour, 23), min(minute, 59), True
+    explicit = hour == 0 or hour > 12  # 24-hour clock leaves nothing to guess
+    return min(hour, 23), min(minute, 59), explicit
+
+
+def _split_time(value: str) -> tuple[int, int]:
+    hour, minute, _explicit = split_time(value)
+    return hour, minute
+
+
+def disambiguate_hour(hour: int, minute: int, now: datetime | None = None) -> int:
+    """For a bare "2:14", pick whichever of 02:14 / 14:14 comes first.
+
+    That is what someone means when they say "remind me at 2:14" - the next
+    2:14, not the one that may be twelve hours away.
+    """
+    if hour > 12:
+        return hour
+    now = now or datetime.now()
+    today = now.date()
+    options = []
+    for candidate in ({hour, (hour % 12) + 12} if hour != 0 else {0, 12}):
+        when = datetime.combine(today, datetime.min.time()).replace(hour=candidate, minute=minute)
+        if when <= now:
+            when += timedelta(days=1)
+        options.append((when, candidate))
+    options.sort()
+    return options[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +192,25 @@ def parse_reminder(text: str) -> Optional[Reminder]:
         return None
 
     at = "09:00"
+    ambiguous_hour: tuple[int, int] | None = None
     time_match = re.search(rf"\bat\s+(\d{{1,2}}(?:[:.]\d{{2}})?\s*(?:am|pm)?)", body, re.IGNORECASE)
     if time_match:
-        hour, minute = _split_time(time_match.group(1))
+        hour, minute, explicit = split_time(time_match.group(1))
+        if not explicit:
+            # Only *one-off* reminders get next-occurrence inference. For a
+            # recurring one, "every month at 10:00" plainly means 10am - there
+            # is no "next occurrence" to reason about, and silently turning it
+            # into 22:00 would be worse than the bug this fixes.
+            ambiguous_hour = (hour, minute)
         at = f"{hour:02d}:{minute:02d}"
         body = body[: time_match.start()] + body[time_match.end():]
+
+    def once_at() -> str:
+        """The time string for a one-off, with am/pm resolved to the next one."""
+        if ambiguous_hour is None:
+            return at
+        hour, minute = ambiguous_hour
+        return f"{disambiguate_hour(hour, minute):02d}:{minute:02d}"
 
     # "in 20 minutes" / "in 2 hours"
     relative = re.search(r"\bin\s+(\d+)\s*(minute|min|hour|hr|day)s?\b", body, re.IGNORECASE)
@@ -195,10 +245,10 @@ def parse_reminder(text: str) -> Optional[Reminder]:
     # "tomorrow" / "today" / "on 12 August"
     if re.search(r"\btomorrow\b", body, re.IGNORECASE):
         body = re.sub(r"\btomorrow\b", "", body, flags=re.IGNORECASE)
-        return Reminder(text=_tidy(body), schedule="once", date=(date.today() + timedelta(days=1)).isoformat(), at=at)
+        return Reminder(text=_tidy(body), schedule="once", date=(date.today() + timedelta(days=1)).isoformat(), at=once_at())
     if re.search(r"\btoday\b|\btonight\b", body, re.IGNORECASE):
         body = re.sub(r"\btoday\b|\btonight\b", "", body, flags=re.IGNORECASE)
-        return Reminder(text=_tidy(body), schedule="once", date=date.today().isoformat(), at=at)
+        return Reminder(text=_tidy(body), schedule="once", date=date.today().isoformat(), at=once_at())
 
     dated = re.search(r"\bon\s+(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)(?:\s+(\d{4}))?", body, re.IGNORECASE)
     if dated:
@@ -210,16 +260,17 @@ def parse_reminder(text: str) -> Optional[Reminder]:
             if when < date.today() and not dated.group(3):
                 when = date(year + 1, month, day_num)
             body = (body[: dated.start()] + body[dated.end():]).strip(" ,")
-            return Reminder(text=_tidy(body), schedule="once", date=when.isoformat(), at=at)
+            return Reminder(text=_tidy(body), schedule="once", date=when.isoformat(), at=once_at())
         except ValueError:
             pass
 
     if time_match:  # a bare time means "today, or tomorrow if that's passed"
-        hour, minute = _split_time(at)
+        resolved = once_at()
+        hour, minute = _split_time(resolved)
         when = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
         if when < datetime.now():
             when += timedelta(days=1)
-        return Reminder(text=_tidy(body), schedule="once", date=when.date().isoformat(), at=at)
+        return Reminder(text=_tidy(body), schedule="once", date=when.date().isoformat(), at=resolved)
     return None
 
 
@@ -294,7 +345,13 @@ class ReminderService:
                         args=[reminder.key],
                         id=f"rem-{abs(hash(reminder.key))}",
                         replace_existing=True,
-                        misfire_grace_time=3600,
+                        # Two minutes, not an hour. With a long grace window,
+                        # restarting the app fires every reminder whose time
+                        # passed while it was closed - which is why a 14:14
+                        # reminder arrived at 15:02. A short window still
+                        # absorbs a busy CPU without resurrecting stale ones.
+                        misfire_grace_time=120,
+                        coalesce=True,
                     )
                     scheduled += 1
                 except Exception:  # noqa: BLE001 - one bad entry must not stop the rest
@@ -306,6 +363,17 @@ class ReminderService:
         self.store.append("reminders", "reminders", reminder.to_json())
         self.sync()
         return reminder
+
+    def next_run_for(self, reminder: Reminder) -> datetime | None:
+        """When this reminder actually fires next, straight from the scheduler.
+
+        Reported back when a reminder is created so a mis-parsed time is
+        obvious immediately, instead of being discovered by it not going off.
+        """
+        for job in self._scheduler.get_jobs():
+            if job.args and job.args[0] == reminder.key:
+                return job.next_run_time
+        return None
 
     def remove(self, phrase: str) -> int:
         wanted = phrase.strip().lower()

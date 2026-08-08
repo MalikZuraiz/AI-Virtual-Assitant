@@ -6,6 +6,12 @@
       "schedule": "once",
       "time": "14:14",
       "date": "2026-08-07"
+    },
+    {
+      "text": "work",
+      "schedule": "once",
+      "time": "22:50",
+      "date": "2026-08-07"
     }
   ]
 }

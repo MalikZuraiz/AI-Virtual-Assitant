@@ -24,8 +24,9 @@ from html import escape
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QGuiApplication, QKeyEvent, QMovie
+from PyQt6.QtGui import QGuiApplication, QKeyEvent, QMovie, QTextCursor
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
@@ -39,7 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from assistant.store.paths import repo_root
-from assistant.ui.qt.theme import BUBBLE_COLORS, QSS, make_icon
+from assistant.ui.qt.theme import ACCENT, BUBBLE_COLORS, OK, QSS, TEXT, make_icon
 
 logger = logging.getLogger("assistant.ui.hud")
 
@@ -88,6 +89,8 @@ class HudWindow(QWidget):
         self._history: list[str] = []
         self._history_index = 0
         self._movies: dict[str, QMovie] = {}
+        #: Document position where the live streaming bubble begins.
+        self._stream_anchor: int | None = None
         self._busy_jobs = 0
 
         self.setWindowTitle(assistant_name)
@@ -267,6 +270,75 @@ class HudWindow(QWidget):
         )
         bar = self.chat.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def append_reminder(self, text: str) -> None:
+        """A reminder gets its own banner - it must not read as one more line.
+
+        A reminder that scrolls past looking like ordinary chat is a reminder
+        you miss, which defeats the point of setting one.
+        """
+        stamp = datetime.now().strftime("%H:%M")
+        body = escape(text).replace("\n", "<br>")
+        self.chat.append(
+            f'<div style="margin:10px 0;padding:10px 12px;border-left:3px solid {OK};'
+            f'background-color:rgba(74,222,128,0.10);border-radius:6px">'
+            f'<span style="color:{OK};font-weight:700;letter-spacing:1px">⏰ REMINDER</span>'
+            f'<span style="color:#5d7186;font-size:9px"> · {stamp}</span><br>'
+            f'<span style="color:{TEXT};font-size:13px">{body}</span></div>'
+        )
+        bar = self.chat.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self.set_status(f"⏰ {text[:80]}")
+
+    # -- live streaming ---------------------------------------------------
+    def stream_update(self, text: str, prefix: str = "") -> None:
+        """Show a reply that is still being written, growing in place.
+
+        The local model produces about seven words a second, so a finished-
+        only reply means half a minute of nothing. This rewrites one bubble
+        as the text arrives: the position where the bubble started is
+        remembered, and each update selects from there to the end and
+        replaces it. Appending instead would leave a trail of partial copies.
+        """
+        if not text:
+            return
+        cursor = self.chat.textCursor()
+        if self._stream_anchor is None:
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self._stream_anchor = cursor.position()
+        else:
+            cursor.setPosition(self._stream_anchor)
+            cursor.movePosition(
+                QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor
+            )
+            cursor.removeSelectedText()
+
+        stamp = datetime.now().strftime("%H:%M")
+        body = escape(text).replace("\n", "<br>")
+        label = f"<b>{escape(prefix)}</b> " if prefix else ""
+        cursor.insertHtml(
+            f'<div style="margin:3px 0"><span style="color:#5d7186;font-size:9px">{stamp}</span> '
+            f'<span style="color:{BUBBLE_COLORS["assistant"]}">{label}{body}'
+            f'<span style="color:{ACCENT}">▌</span></span></div>'
+        )
+        bar = self.chat.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def end_stream(self) -> None:
+        """Drop the live bubble so the finished reply can be appended cleanly."""
+        if self._stream_anchor is None:
+            return
+        cursor = self.chat.textCursor()
+        cursor.setPosition(self._stream_anchor)
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        self._stream_anchor = None
+
+    def flash(self) -> None:
+        """Bounce the taskbar/window so an off-screen user still notices."""
+        app = QApplication.instance()
+        if app is not None:
+            app.alert(self, 3000)
 
     def set_status(self, text: str) -> None:
         self.status.setText(text[:120])

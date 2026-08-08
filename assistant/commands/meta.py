@@ -30,10 +30,10 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
     def cmd_help(text, ctx):
         match = re.search(r"help\s+(?:with\s+)?(.+?)\s*$", text.strip(), re.IGNORECASE)
         category = match.group(1).strip() if match else None
-        return Reply(
-            ctx.router.help_text(category),
-            speak=False,  # a 200-line list is not something to read aloud
-        )
+        # Spoken like everything else; the length cap in TextToSpeech stops a
+        # 200-line listing from occupying the speaker and says the rest is in
+        # the chat.
+        return Reply(ctx.router.help_text(category))
 
     @router.register(
         "refresh config",
@@ -180,20 +180,153 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
 
         return autostart.disable()
 
+    # NOTE: "ask"/"nova <prompt>" live in assistant/commands/chat.py, which
+    # owns everything that reaches the local model. Keeping a second entry
+    # point here made "chat status" route into the model instead of the
+    # diagnostics command.
+
     @router.register(
-        "ask",
-        pattern=r"^\s*(?:ask|chat)\s*:?\s+(.+)$",
-        help="ask what's a good name for this function  -  open chat via the local model.",
-        category="assistant",
-        priority=6,
+        "live listening",
+        keywords=(
+            "live listening", "always listen", "start listening", "listen continuously",
+            "hands free", "hands free mode", "keep listening",
+        ),
+        help="Listens continuously so you can talk without touching a hotkey.",
+        category="voice",
+        instant=True,
     )
-    def cmd_ask(text, ctx):
-        prompt = re.search(r"^\s*(?:ask|chat)\s*:?\s+(.+)$", text, re.IGNORECASE | re.DOTALL).group(1)
-        llm = ctx.llm
-        if llm is None:
-            return "Open chat isn't wired up on this build."
-        ctx.progress("Thinking (local model, this can take a few seconds)...")
-        return llm.chat(prompt)
+    def cmd_live_on(text, ctx):
+        control = getattr(ctx, "listener_control", None)
+        if control is None:
+            return "The microphone isn't available in this mode (try the main window)."
+        if re.search(r"\b(stop|off|disable|end|quit)\b", text, re.IGNORECASE):
+            return control("stop")
+        return control("start")
+
+    @router.register(
+        "stop listening",
+        keywords=("stop listening", "stop live listening", "turn off listening", "hands free off"),
+        help="Turns continuous listening back off.",
+        category="voice",
+        instant=True,
+    )
+    def cmd_live_off(text, ctx):
+        control = getattr(ctx, "listener_control", None)
+        if control is None:
+            return "The microphone isn't available in this mode."
+        return control("stop")
+
+    @router.register(
+        "set wake word",
+        pattern=r"^\s*(?:set\s+)?wake\s*word\s+(?:to\s+)?(.+?)\s*$",
+        help="wake word to nova  -  in live mode I only act on speech containing it ('none' to clear).",
+        category="voice",
+        instant=True,
+    )
+    def cmd_wake_word(text, ctx):
+        word = re.search(r"wake\s*word\s+(?:to\s+)?(.+?)\s*$", text, re.IGNORECASE).group(1).strip().lower()
+        if word in {"none", "off", "nothing", "clear"}:
+            ctx.store.set_value("core", "voice.live_wake_word", "")
+            return "Wake word cleared - in live mode I'll act on everything I hear."
+        ctx.store.set_value("core", "voice.live_wake_word", word)
+        return (
+            f"Wake word set to '{word}'. In live mode I'll ignore anything without it.\n"
+            "Restart live listening for this to take effect."
+        )
+
+    @router.register(
+        "hotkeys",
+        keywords=("hotkeys", "shortcuts", "what are the hotkeys", "keyboard shortcuts"),
+        help="Lists the global keyboard shortcuts.",
+        category="voice",
+        instant=True,
+    )
+    def cmd_hotkeys(text, ctx):
+        return (
+            "Global shortcuts (work anywhere in Windows):\n"
+            "  Ctrl+Alt+Space    show / hide this window\n"
+            "  Ctrl+Alt+H        hide it\n"
+            "  Ctrl+Shift+Space  hold to talk (release to send)\n"
+            "  Esc               hide the window when it's focused\n"
+            "  Up / Down         previous commands in the input box\n\n"
+            "Prefer not to use a key at all? Say 'live listening' and just talk."
+        )
+
+    @router.register(
+        "show terminals",
+        keywords=(
+            "show terminals", "show the terminal", "show consoles",
+            "hide terminals", "hide the terminal", "run scripts quietly",
+        ),
+        help="Whether scripts and reports run in a visible terminal window.",
+        category="assistant",
+        instant=True,
+    )
+    def cmd_show_terminals(text, ctx):
+        wants = not re.search(r"\b(hide|quiet|quietly|off|without)\b", text, re.IGNORECASE)
+        ctx.store.set_value("core", "behaviour.show_terminals", wants)
+        if wants:
+            return (
+                "Scripts and reports will run in their own terminal window so you "
+                "can watch them. I still wait for them to finish and file the output."
+            )
+        return (
+            "Scripts will run hidden, with their output going to the status line. "
+            "Note: anything that prompts for input will fail this way."
+        )
+
+    @router.register(
+        "stop talking",
+        keywords=(
+            "stop talking", "be quiet", "shut up", "stop speaking",
+            "quiet", "silence", "stop the voice",
+        ),
+        help="Cuts off whatever I'm saying right now (same as the palm-out gesture).",
+        category="voice",
+        instant=True,
+    )
+    def cmd_stop_talking(text, ctx):
+        return Reply(ctx.tts.silence(), speak=False)
+
+    @router.register(
+        "mic test",
+        keywords=("mic test", "test my mic", "test microphone", "check my mic", "is my mic working"),
+        help="Checks the microphone and reports what it actually captured.",
+        category="voice",
+    )
+    def cmd_mic_test(text, ctx):
+        from assistant.core.listening import SAMPLE_RATE, SpeechInput
+
+        listener = getattr(ctx, "listener", None) or SpeechInput(on_text=lambda _t: None)
+        rate = listener.device_rate()
+        ctx.progress("Listening to the room for a moment...")
+        try:
+            import numpy as np
+
+            stream = listener._open_stream()
+            if stream is None:
+                return "I couldn't open the microphone at all."
+            with stream:
+                threshold = listener._noise_floor(stream, rate)
+                frames = int(rate * 0.1)
+                chunks = [stream.read(frames)[0][:, 0] for _ in range(10)]
+            audio = np.concatenate(chunks)
+            rms = float(np.sqrt(np.mean(np.square(audio))))
+            peak = float(np.max(np.abs(audio)))
+        except Exception as exc:  # noqa: BLE001
+            return f"Microphone test failed: {exc}"
+
+        verdict = "looks healthy"
+        if peak > 0.95:
+            verdict = "is clipping - the input gain is too high, or the driver is mangling it"
+        elif peak < 0.002:
+            verdict = "is picking up almost nothing - check it isn't muted"
+        return (
+            f"Microphone at {rate} Hz (resampled to {SAMPLE_RATE} Hz for transcription).\n"
+            f"  room noise : rms {rms:.4f}, peak {peak:.4f}\n"
+            f"  speech starts above rms {threshold:.4f}\n"
+            f"The signal {verdict}."
+        )
 
     @router.register(
         "where do reports go",

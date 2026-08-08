@@ -16,6 +16,24 @@
       "after": {
         "open": "a folder"
       }
+    },
+    {
+      "name": "python bot (ped)",
+      "trigger": [
+        "open python bot",
+        "open ped bot",
+        "python bot",
+        "ped bot",
+        "run python bot",
+        "generate python bot report",
+        "open the bot"
+      ],
+      "working_directory": "D:/Office/Scripts/Python Bot (PED)",
+      "run_as": "shell",
+      "target": "code \"D:/Office/Scripts/Python Bot (PED)\"",
+      "args": [],
+      "description": "Opens the PED scraper in VS Code - never runs it.",
+      "console": false
     }
   ]
 }

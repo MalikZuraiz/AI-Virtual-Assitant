@@ -6,9 +6,9 @@ globals - the pattern the original prototype used, importing a shared
 
 Two things here are worth knowing about:
 
-* **Lazy subsystems.** ``virtual_mouse`` imports mediapipe, which takes
-  seconds and allocates real memory. It is built on first use, so the app
-  starts fast on an 8GB laptop and never pays for a feature nobody invoked.
+* **Lazy subsystems.** ``gestures`` imports mediapipe, which takes seconds
+  and allocates real memory. It is built on first use, so the app starts fast
+  on an 8GB laptop and never pays for a feature nobody invoked.
 * **Per-thread job handle.** Handlers run on worker threads and want to
   stream progress ("still running..."), but ``Context`` is shared by all of
   them. ``ctx.progress(...)`` routes to *the calling thread's* job via
@@ -32,6 +32,7 @@ from assistant.config import AppConfig
 from assistant.core.conversation import ConversationState
 from assistant.core.jobs import JobHandle, JobRunner
 from assistant.core.router import CommandRouter
+from assistant.core.selection import SelectionState
 from assistant.core.voice import TextToSpeech
 from assistant.store.store import ConfigStore
 
@@ -55,6 +56,7 @@ class Context:
     router: CommandRouter
     jobs: JobRunner
     conversation: ConversationState
+    selection: SelectionState
 
     apps: AppLauncher
     files: FileManager
@@ -70,10 +72,21 @@ class Context:
     llm: object | None = None
     confirm: Callable[[str], bool] = field(default=_default_confirm)
     notify: Callable[[str, str], None] = field(default=_noop)
+    #: Set by the Assistant: receives the answer-so-far during streaming.
+    on_stream: Optional[Callable[[str], None]] = None
+    #: ``("start" | "stop" | "status") -> str``. Supplied by the UI, which
+    #: owns the microphone; commands never touch audio devices directly.
+    listener_control: Callable[[str], str] | None = None
+    #: Lets a gesture bound to ``action: command`` route text back through
+    #: the assistant, so gestures can trigger anything commands can.
+    run_command: Callable[[str], None] | None = None
+    gestures: object | None = None
 
     _local: threading.local = field(default_factory=threading.local, repr=False)
-    _virtual_mouse: object | None = field(default=None, repr=False)
-    _vm_hooks: dict = field(default_factory=dict, repr=False)
+    #: Built on first use by the gesture pack - importing mediapipe is slow
+    #: and memory-hungry, so an assistant that is never asked for gestures
+    #: never pays for it.
+    gestures: object | None = None
 
     # -- per-thread job plumbing -----------------------------------------
     def bind_job(self, handle: JobHandle | None) -> None:
@@ -92,34 +105,20 @@ class Context:
         else:
             logger.debug("progress (no job bound): %s", text)
 
+    def stream(self, text: str) -> None:
+        """Push a growing reply into the chat bubble as it is produced.
+
+        Distinct from :meth:`progress`, which is transient status. This is the
+        answer itself arriving piece by piece - what makes a slow local model
+        feel like it is writing rather than hanging.
+        """
+        if self.on_stream is not None:
+            self.on_stream(text)
+
     @property
     def cancelled(self) -> bool:
         handle = self.job
         return bool(handle and handle.cancelled)
-
-    # -- lazily-built subsystems -----------------------------------------
-    @property
-    def virtual_mouse(self):
-        """Built on first use - importing mediapipe is slow and memory-hungry."""
-        if self._virtual_mouse is None:
-            from assistant.vision.virtual_mouse import VirtualMouseController
-
-            cfg = self.config
-            self._virtual_mouse = VirtualMouseController(
-                camera_index=cfg.virtual_mouse_camera_index,
-                fps_limit=cfg.virtual_mouse_fps_limit,
-                sensitivity=cfg.virtual_mouse_sensitivity,
-                center_x=cfg.virtual_mouse_center_x,
-                center_y=cfg.virtual_mouse_center_y,
-                min_cutoff=cfg.virtual_mouse_min_cutoff,
-                beta=cfg.virtual_mouse_beta,
-                on_frame=self._vm_hooks.get("on_frame"),
-                on_status=self._vm_hooks.get("on_status"),
-            )
-        return self._virtual_mouse
-
-    def set_virtual_mouse_hooks(self, on_frame=None, on_status=None) -> None:
-        self._vm_hooks = {"on_frame": on_frame, "on_status": on_status}
 
     # -- construction -----------------------------------------------------
     @classmethod
@@ -137,6 +136,7 @@ class Context:
             router=router,
             jobs=jobs,
             conversation=ConversationState(),
+            selection=SelectionState(),
             apps=AppLauncher(config),
             files=FileManager(),
             shell=SafeShell(config),

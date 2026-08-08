@@ -80,28 +80,11 @@ class AppConfig:
     apps: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_APPS))
     shell_allowlist: list[str] = field(default_factory=lambda: list(DEFAULT_SHELL_ALLOWLIST))
     require_confirmation_for_destructive: bool = True
-    virtual_mouse_camera_index: int = 0
-    virtual_mouse_fps_limit: int = 30
-    # How much of the camera frame maps to the full screen: 1.0 = the whole
-    # frame edge-to-edge (the old, unreachable-corners behavior); higher
-    # values shrink the "active" region so a smaller, more comfortable hand
-    # movement range covers the entire screen - raise this if you can't
-    # reach the screen edges (especially the bottom).
-    virtual_mouse_sensitivity: float = 1.7
-    # Center of the active region, as a fraction of the frame (0.5 = middle).
-    # The default y is below center because a hand held up in front of a
-    # laptop webcam naturally sits in the lower-middle of the frame, not
-    # dead center - this makes the reachable-bottom problem better out of
-    # the box; nudge lower (e.g. 0.35) if the bottom is still hard to reach,
-    # or back toward 0.5 if the top is now too easy to overshoot.
-    virtual_mouse_center_x: float = 0.5
-    virtual_mouse_center_y: float = 0.42
-    # One-Euro-filter smoothing: min_cutoff lower = smoother/less jitter
-    # when the hand is nearly still; beta higher = less lag when moving
-    # fast. These two together give smooth-but-responsive cursor motion
-    # instead of the flat, laggy exponential smoothing this used to use.
-    virtual_mouse_min_cutoff: float = 0.6
-    virtual_mouse_beta: float = 0.6
+    # Camera used by the gesture module. Everything else about gestures -
+    # which poses map to which actions, hold time, cooldown - is data in
+    # config/gestures.json rather than a field here.
+    camera_index: int = 0
+    gesture_fps_limit: int = 24
 
     @property
     def config_dir(self) -> Path:

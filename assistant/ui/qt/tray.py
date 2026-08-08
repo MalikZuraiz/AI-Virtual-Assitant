@@ -10,12 +10,27 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 from assistant.ui.qt.theme import make_icon
 
 logger = logging.getLogger("assistant.ui.tray")
+
+#: Windows groups taskbar buttons and attributes toast notifications by this
+#: id. Without it, toasts are attributed to "python.exe" (or show no name at
+#: all), which is why a reminder arrived looking anonymous.
+APP_USER_MODEL_ID = "Nova.DesktopAssistant.Personal.1"
+
+
+def set_app_identity(name: str = "Nova") -> None:
+    """Tell Windows who we are, so notifications carry our name and icon."""
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except (AttributeError, OSError):  # pragma: no cover - non-Windows
+        logger.debug("Could not set the app user model id")
 
 
 class Tray(QSystemTrayIcon):
@@ -27,6 +42,7 @@ class Tray(QSystemTrayIcon):
     def __init__(self, assistant_name: str = "Nova", parent=None) -> None:
         super().__init__(make_icon(assistant_name), parent)
         self.assistant_name = assistant_name
+        self._icon_cache: QIcon | None = None
         self.setToolTip(f"{assistant_name} - your desktop assistant")
         self.setContextMenu(self._build_menu())
         self.activated.connect(self._on_activated)
@@ -68,8 +84,18 @@ class Tray(QSystemTrayIcon):
         ):
             self.toggle_window.emit()
 
-    def notify(self, title: str, message: str, seconds: int = 6) -> None:
+    def notify(self, title: str, message: str, seconds: int = 12) -> None:
+        """Show a Windows toast. Long-lived and icon'd, so it can't be missed."""
         try:
-            self.showMessage(title, message, make_icon(self.assistant_name), seconds * 1000)
+            self.showMessage(title, message, self._notify_icon, seconds * 1000)
         except Exception:  # noqa: BLE001 - notifications are cosmetic
             logger.exception("Tray notification failed")
+
+    @property
+    def _notify_icon(self) -> QIcon:
+        if self._icon_cache is None:
+            self._icon_cache = make_icon(self.assistant_name, size=128)
+        return self._icon_cache
+
+    def notify_reminder(self, text: str) -> None:
+        self.notify(f"{self.assistant_name} · Reminder", text, seconds=20)

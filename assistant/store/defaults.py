@@ -100,14 +100,16 @@ def _core() -> dict:
         },
         "llm": {
             "_comment": (
-                "Optional local-only fallback for open chat (never for actions). "
-                "Install Ollama, pull a small quantised model, flip enabled to true, "
-                "then say 'refresh'. Leave off until you have the RAM headroom."
+                "Local-only chat via Ollama. Reached ONLY when a message starts "
+                "with the prefix below - everything else goes to the command "
+                "router. Personas live in personas.json."
             ),
-            "enabled": False,
+            "enabled": True,
             "provider": "ollama",
             "base_url": "http://localhost:11434",
             "model": "qwen2.5:1.5b-instruct",
+            "prefix": "nova",
+            "history_turns": 6,
         },
         "last_active_path": None,
     }
@@ -234,6 +236,51 @@ def _workspaces() -> dict:
     }
 
 
+def _personas() -> dict:
+    from assistant.store.personas import default_personas
+
+    return default_personas()
+
+
+def _gestures() -> dict:
+    return {
+        "_comment": (
+            "Hand gestures -> Windows actions. action: hotkey | switch_window | "
+            "command | text | none. Hold a pose for hold_frames frames, or swipe. "
+            "Raise cooldown_seconds if gestures fire twice; raise hold_frames if "
+            "they fire by accident."
+        ),
+        "camera_index": 0,
+        "fps_limit": 20,
+        "hold_frames": 6,
+        "cooldown_seconds": 1.2,
+        "swipe_travel": 0.22,
+        "confidence": 0.6,
+        "start_with_app": False,
+        "bindings": {
+            "swipe_left": {
+                "action": "hotkey", "keys": "ctrl+windows+left", "label": "previous desktop",
+            },
+            "swipe_right": {
+                "action": "hotkey", "keys": "ctrl+windows+right", "label": "next desktop",
+            },
+            "swipe_up": {"action": "hotkey", "keys": "windows+tab", "label": "task view"},
+            "swipe_down": {"action": "hotkey", "keys": "windows+d", "label": "show desktop"},
+            "peace": {"action": "hotkey", "keys": "ctrl+windows+d", "label": "new desktop"},
+            "fist": {"action": "hotkey", "keys": "ctrl+windows+f4", "label": "close this desktop"},
+            "three": {"action": "switch_window", "label": "switch window"},
+            "open_palm": {"action": "none", "label": "(neutral - resets the gesture)"},
+            "point": {"action": "none", "label": "(unused - keep free for pointing)"},
+            "thumbs_up": {"action": "hotkey", "keys": "volume up", "label": "volume up"},
+            "thumbs_down": {"action": "hotkey", "keys": "volume down", "label": "volume down"},
+            "ok": {"action": "hotkey", "keys": "play/pause media", "label": "play / pause"},
+            "rock": {"action": "hotkey", "keys": "windows+shift+s", "label": "screenshot"},
+            "call": {"action": "command", "command": "what's my day", "label": "daily briefing"},
+            "four": {"action": "hotkey", "keys": "windows+m", "label": "minimise everything"},
+        },
+    }
+
+
 DEFAULTS: dict[str, "callable"] = {
     "core": _core,
     "projects": _projects,
@@ -245,6 +292,8 @@ DEFAULTS: dict[str, "callable"] = {
     "reminders": _reminders,
     "media": _media,
     "workspaces": _workspaces,
+    "personas": _personas,
+    "gestures": _gestures,
 }
 
 #: Files loaded on start, in hierarchy order - broadest first (brief §4.1).
@@ -259,6 +308,8 @@ FILE_ORDER: tuple[str, ...] = (
     "personal_links",
     "media",
     "reminders",
+    "personas",
+    "gestures",
 )
 
 

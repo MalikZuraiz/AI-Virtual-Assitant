@@ -31,8 +31,9 @@ from assistant.ui.qt.tray import Tray
 
 logger = logging.getLogger("assistant.ui.app")
 
-SUMMON_HOTKEY = "ctrl+alt+space"
-TALK_HOTKEY = "ctrl+shift+space"
+SUMMON_HOTKEY = "ctrl+alt+space"   # show/hide the window from anywhere
+TALK_HOTKEY = "ctrl+shift+space"  # hold to talk
+HIDE_HOTKEY = "ctrl+alt+h"        # hide without toggling back
 
 
 class ConfirmBroker(QObject):
@@ -74,23 +75,61 @@ class ConfirmBroker(QObject):
 
 
 class HotkeyBridge(QObject):
-    """Global hotkeys fire on the ``keyboard`` library's own thread."""
+    """Global hotkeys, fired on the ``keyboard`` library's own thread.
+
+    Push-to-talk needs *press* and *release* as separate events so the mic
+    records for exactly as long as the key is held. ``keyboard.add_hotkey``
+    only gives the press, so the talk key is registered with two raw hooks
+    instead, and a guard flag stops key auto-repeat from firing "pressed"
+    dozens of times while it is held down.
+    """
 
     summon = pyqtSignal()
-    talk = pyqtSignal()
+    talk = pyqtSignal()            # tap: record until you stop speaking
+    talk_pressed = pyqtSignal()    # hold: start recording
+    talk_released = pyqtSignal()   # hold: stop recording
+    hide_window = pyqtSignal()
 
-    def install(self) -> str:
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._talk_down = False
+        self._registered: list[str] = []
+
+    def install(self, summon: str = SUMMON_HOTKEY, talk: str = TALK_HOTKEY, hide: str = HIDE_HOTKEY) -> str:
         try:
             import keyboard
         except ImportError:
             return "global hotkeys unavailable (keyboard not installed)"
+
+        def _press() -> None:
+            if not self._talk_down:
+                self._talk_down = True
+                self.talk_pressed.emit()
+
+        def _release() -> None:
+            if self._talk_down:
+                self._talk_down = False
+                self.talk_released.emit()
+
         try:
-            keyboard.add_hotkey(SUMMON_HOTKEY, self.summon.emit, suppress=False)
-            keyboard.add_hotkey(TALK_HOTKEY, self.talk.emit, suppress=False)
+            keyboard.add_hotkey(summon, self.summon.emit, suppress=False)
+            self._registered.append(f"{summon} show/hide")
+            keyboard.add_hotkey(hide, self.hide_window.emit, suppress=False)
+            self._registered.append(f"{hide} hide")
+            keyboard.on_press_key(talk.split("+")[-1], lambda _e: self._maybe(keyboard, talk, _press))
+            keyboard.on_release_key(talk.split("+")[-1], lambda _e: _release())
+            self._registered.append(f"hold {talk} to talk")
         except Exception as exc:  # noqa: BLE001 - hooks can be blocked by policy
             logger.warning("Could not register global hotkeys: %s", exc)
-            return "global hotkeys unavailable"
-        return f"{SUMMON_HOTKEY} to summon, {TALK_HOTKEY} to talk"
+            return "global hotkeys unavailable (try running as administrator)"
+        return " · ".join(self._registered)
+
+    @staticmethod
+    def _maybe(keyboard_module, combo: str, callback) -> None:
+        """Only fire when the whole chord is down, not just the final key."""
+        modifiers = [part for part in combo.split("+")[:-1]]
+        if all(keyboard_module.is_pressed(modifier) for modifier in modifiers):
+            callback()
 
 
 class AssistantApp:
@@ -129,17 +168,22 @@ class AssistantApp:
         self.bridge.reminded.connect(self._on_reminder)
         self.bridge.pending.connect(self._on_pending)
         self.bridge.progressed.connect(self.window.set_status)
+        self.bridge.streamed.connect(self._on_stream)
 
         self.tray.toggle_window.connect(self.window.toggle_visibility)
         self.tray.quit_requested.connect(self.quit)
         self.tray.command_requested.connect(self._on_submit_echo)
         self.tray.mic_toggled.connect(self._set_voice_enabled)
 
-        self.hotkeys.summon.connect(self.window.show_and_focus)
+        self.hotkeys.summon.connect(self.window.toggle_visibility)
+        self.hotkeys.hide_window.connect(self.window.hide)
         self.hotkeys.talk.connect(self._on_mic)
+        self.hotkeys.talk_pressed.connect(self._on_hold_start)
+        self.hotkeys.talk_released.connect(self._on_hold_stop)
 
         self.assistant.set_confirm(self.confirm_broker.confirm)
         self.assistant.set_notifier(self.tray.notify)
+        self.assistant.set_listener_control(self._listener_control)
 
     # -- slots (all on the GUI thread) ------------------------------------
     def _on_submit(self, text: str) -> None:
@@ -155,28 +199,65 @@ class AssistantApp:
         self.window.job_started()
         self.window.set_status(text)
 
+    def _on_stream(self, text: str) -> None:
+        """A reply still being written - rewrite the live bubble in place."""
+        self.window.stream_update(
+            text, prefix=f"{self.assistant.config.assistant_name.lower()}:"
+        )
+
     def _on_reply(self, text: str, kind: str = "assistant") -> None:
         self.window.job_finished()
+        # Clear the live bubble first, so the finished reply replaces it
+        # rather than appearing underneath a duplicate.
+        self.window.end_stream()
         self.window.append(text, kind=kind, prefix=f"{self.assistant.config.assistant_name.lower()}:")
 
     def _on_reminder(self, text: str) -> None:
         self.window.show_and_focus()
-        self.window.append(text, kind="reminder", prefix="⏰")
+        self.window.append_reminder(text.removeprefix("Reminder: "))
+        self.window.flash()
 
     def _set_voice_enabled(self, enabled: bool) -> None:
         self.assistant.tts.enabled = enabled
         self.window.set_status("voice replies on" if enabled else "voice replies muted")
 
-    def _on_mic(self) -> None:
+    def _ensure_listener(self):
         from assistant.core.listening import SpeechInput
 
         if self.listener is None:
             self.listener = SpeechInput(
-                on_state=lambda listening: self.window.set_listening(listening),
+                on_state=lambda listening: QTimer.singleShot(
+                    0, lambda: self.window.set_listening(listening)
+                ),
                 on_text=self._on_transcript,
-                on_error=lambda message: self.window.append(message, kind="error"),
+                on_error=lambda message: QTimer.singleShot(
+                    0, lambda: self.window.append(message, kind="error")
+                ),
+                wake_word=str(
+                    self.assistant.store.value("core", "voice.live_wake_word", "") or ""
+                ),
             )
-        self.listener.listen_once()
+            self.listener.preload()  # so the first phrase isn't slow
+        return self.listener
+
+    def _on_mic(self) -> None:
+        self._ensure_listener().listen_once()
+
+    def _on_hold_start(self) -> None:
+        self._ensure_listener().hold_start()
+
+    def _on_hold_stop(self) -> None:
+        if self.listener is not None:
+            self.listener.hold_stop()
+
+    def _listener_control(self, action: str) -> str:
+        """Lets chat commands turn live listening on and off."""
+        listener = self._ensure_listener()
+        if action == "start":
+            return listener.start_live()
+        if action == "stop":
+            return listener.stop_live()
+        return "Live listening is " + ("on." if listener.live else "off.")
 
     def _on_transcript(self, text: str) -> None:
         # Arrives from the listener thread; hop to the GUI thread first.

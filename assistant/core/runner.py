@@ -53,6 +53,11 @@ class Runnable:
     env: dict[str, str] = field(default_factory=dict)
     timeout: int | None = 1800
     description: str = ""
+    #: Run in its own visible console window instead of capturing output.
+    #: Needed by anything that prompts, draws a progress bar, or opens a
+    #: browser it expects a console alongside - and useful for everything
+    #: else, because watching a report run beats waiting blind.
+    console: bool = False
 
     @classmethod
     def from_entry(cls, entry: dict) -> "Runnable":
@@ -65,6 +70,7 @@ class Runnable:
             env={str(k): str(v) for k, v in (entry.get("env") or {}).items()},
             timeout=entry.get("timeout", 1800),
             description=str(entry.get("description") or ""),
+            console=bool(entry.get("console", False)),
         )
 
     # -- resolution -------------------------------------------------------
@@ -199,6 +205,63 @@ def _popen_kwargs(runnable: Runnable, use_shell: bool) -> dict:
     return kwargs
 
 
+def execute_in_console(runnable: Runnable, on_output: OutputSink | None = None) -> RunResult:
+    """Run in a visible console window and wait for it to finish.
+
+    Two things this buys that captured execution cannot:
+
+    * **The script can talk to you.** Anything that calls ``input()``, shows
+      a progress bar, or expects a terminal gets a real one. Captured runs
+      pass ``stdin=DEVNULL``, which turns any prompt into an instant
+      ``EOFError`` - that is why the PED bot failed here while working fine
+      when launched by hand.
+    * **You can see what it is doing.** A four-minute report is no longer a
+      silent wait.
+
+    The process still runs under our control (``CREATE_NEW_CONSOLE``, not a
+    detached ``start``), so the caller can wait for it and diff the
+    filesystem afterwards to find what it produced.
+    """
+    command, use_shell = build_command(runnable)
+    printable = command if isinstance(command, str) else subprocess.list2cmdline(command)
+    logger.info("Running %s in a console: %s", runnable.name, printable)
+    if on_output:
+        on_output(f"Opened a terminal for {runnable.name} - watch it there.")
+
+    env = os.environ.copy()
+    env.update(runnable.env)
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if os.name == "nt" else 0
+    started = time.monotonic()
+    proc = subprocess.Popen(  # noqa: S603 - user-configured target
+        command,
+        cwd=str(runnable.cwd) if runnable.cwd and runnable.cwd.is_dir() else None,
+        env=env,
+        shell=use_shell,
+        creationflags=flags,
+    )
+    try:
+        proc.wait(timeout=runnable.timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return RunResult(
+            runnable=runnable.name,
+            returncode=-1,
+            stdout=f"[timed out after {runnable.timeout}s]",
+            stderr="",
+            duration=time.monotonic() - started,
+            command=printable,
+        )
+    return RunResult(
+        runnable=runnable.name,
+        returncode=proc.returncode if proc.returncode is not None else -1,
+        stdout="(ran in its own terminal window)",
+        stderr="",
+        duration=time.monotonic() - started,
+        command=printable,
+    )
+
+
 def execute(
     runnable: Runnable,
     on_output: OutputSink | None = None,
@@ -208,6 +271,9 @@ def execute(
 
     Runs on a worker thread; never call this from the GUI thread.
     """
+    if runnable.console:
+        return execute_in_console(runnable, on_output)
+
     command, use_shell = build_command(runnable)
     printable = command if isinstance(command, str) else subprocess.list2cmdline(command)
     logger.info("Running %s: %s", runnable.name, printable)
