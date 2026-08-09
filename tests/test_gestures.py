@@ -55,6 +55,20 @@ def test_each_fire_once_pose():
     assert classify(_hand(index=True, middle=True, ring=True, pinky=True)) == "four"
 
 
+def test_index_alone_splits_on_the_thumb():
+    """The same one-finger shape means two different things depending on
+    the thumb: tucked in is the relaxed mute hold, stuck out to the side is
+    the deliberate "L" shape for window switching."""
+    tucked = _hand(index=True)
+    spread = _hand(index=True, thumb_pos=THUMB_OUT)
+    assert classify(tucked) == "one"
+    assert classify(spread) == "l_sign"
+
+
+def test_pinky_alone_is_its_own_pose():
+    assert classify(_hand(pinky=True)) == "pinky"
+
+
 def test_four_fingers_with_thumb_out_is_five():
     hand = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
     assert classify(hand) == "five"

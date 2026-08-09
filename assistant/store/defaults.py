@@ -280,6 +280,11 @@ def _gestures() -> dict:
             "four": {"action": "hotkey", "keys": "volume down", "label": "volume down"},
             "five": {"action": "none", "label": "(neutral - re-arms, fires nothing)"},
             "rock": {"action": "hotkey", "keys": "windows+shift+s", "label": "screenshot"},
+            "l_sign": {
+                "action": "switch_window",
+                "label": "switch window (reopens the last one if none is active)",
+            },
+            "pinky": {"action": "hotkey", "keys": "windows+tab", "label": "task view"},
             "swipe_left": {"action": "hotkey", "keys": "ctrl+windows+left", "label": "previous desktop"},
             "swipe_right": {"action": "hotkey", "keys": "ctrl+windows+right", "label": "next desktop"},
             "swipe_up": {"action": "hotkey", "keys": "ctrl+windows+d", "label": "new desktop"},

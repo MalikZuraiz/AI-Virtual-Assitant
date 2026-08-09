@@ -494,6 +494,49 @@ resets swipe progress" test now holds a fist for longer than the tolerance
 window so it is still testing a deliberate pose change rather than a frame
 or two of noise.
 
+## 3f. Two new poses: the L shape and a lone pinky
+
+Requested once the bug-fix round above was confirmed working: an "L" shape
+(index finger + thumb) for switching windows, with the specific request that
+it reopen the last active window when nothing currently is one, and a lone
+pinky finger for Task View.
+
+Both slot into the existing one-finger branch of `classify()` rather than
+needing a new axis of pose logic: a raised index finger already meant
+`HOLD_POSE` ("one", mute), so the thumb is what tells the two apart now -
+tucked in is still the relaxed mute hold, held out to the side is the
+deliberate L shape (`thumb_is_out()`, already used elsewhere to split "four"
+from "five", does the same job here). A raised pinky alone used to be
+rejected outright (`"none"` - "far more often a misread than a deliberate
+signal"); it still is for a lone middle or ring finger, but pinky now gets
+its own pose since the user asked for it to mean something specific. Both
+are ordinary fire-once poses through `GestureRecogniser` - nothing about
+`_process()`'s routing needed to change.
+
+**"Switch windows" needed more than a bare Alt-Tab.** A press-and-release
+`alt+tab` only bounces between the two most recent windows, so window
+switching already went through `WindowSwitcher` (holds Alt down briefly
+after each Tab, so repeating the gesture steps further down the list). What
+it didn't handle: Alt-Tab assumes something is already active to switch away
+from. If everything is minimised or the desktop itself has focus, Alt-Tab
+just opens the switcher over nothing. `WindowSwitcher.step()` now checks
+that first - only on a *fresh* gesture, not mid-cycle, since re-checking
+while the switcher is already open and Alt is held would derail an
+in-progress cycle - and if there's truly nothing active, walks the Z-order
+(`GetTopWindow` / `GetWindow(..., GW_HWNDNEXT)`) for the first real window
+(visible, titled, not a tool window, not the shell), restores it if
+minimised, and calls `SetForegroundWindow` - preceded by a real `alt` tap,
+since Windows refuses to hand foreground focus to a process that hasn't
+itself sent input recently, the same restriction the hotkey-driven gestures
+already satisfy just by existing.
+
+`tests/test_window_switcher.py` fakes the pywin32 surface (`GetForegroundWindow`,
+`GetWindow`, `SetForegroundWindow`, etc.) rather than the real desktop - a
+live test would actually steal focus and move windows around, which a test
+must never do as a side effect. The read-only half (`_foreground_is_real_window`)
+was additionally checked against the real desktop live, since that part has
+no side effects to worry about.
+
 ---
 
 ## 4. Config reference

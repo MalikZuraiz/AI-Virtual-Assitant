@@ -12,6 +12,8 @@ swipes, and one pose that is a continuous hold, not a fire-once event.
 | 4 fingers | fire-once | volume down |
 | 5 fingers | neutral | re-arms the recogniser, fires nothing |
 | Rock (index+pinky) | fire-once | screenshot |
+| L (index+thumb) | fire-once | switch windows (reopens the last one if none is active) |
+| Pinky alone | fire-once | Task View (same screen as Windows+Tab) |
 | Swipe left/right/up/down, shown as 2 fingers | fire-once | prev/next/new desktop, minimise |
 
 **Why swipes are gated to one specific pose.** The first version supported
@@ -72,7 +74,7 @@ FrameCallback = Callable[[object], None]
 ActionCallback = Callable[[str, dict], str]
 
 #: Fire-once poses the debounced GestureRecogniser handles.
-POSES = ("fist", "three", "four", "five", "rock")
+POSES = ("fist", "three", "four", "five", "rock", "l_sign", "pinky")
 #: The continuous hold pose - tracked by HoldTracker, never by
 #: GestureRecogniser (see the module docstring for why).
 HOLD_POSE = "one"
@@ -130,9 +132,17 @@ def classify(shape: HandShape) -> str:
     if count == 0:
         return "fist"
     if count == 1:
-        # Only a raised index counts. A lone middle or pinky finger is far
-        # more often a misread of a curling hand than a deliberate signal.
-        return "one" if index else "none"
+        # A lone middle or ring finger is far more often a misread of a
+        # curling hand than a deliberate signal, so those still fall through
+        # to "none". Index and pinky are the two deliberate one-finger
+        # signals - the thumb is what tells the two index-only poses apart:
+        # tucked in is the relaxed mute hold, stuck out to the side is the
+        # deliberate "L" shape.
+        if index:
+            return "l_sign" if thumb_is_out(shape) else "one"
+        if pinky:
+            return "pinky"
+        return "none"
     if count == 2:
         return "two" if index and middle else "none"
     if count == 3:

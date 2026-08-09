@@ -475,6 +475,8 @@ direction.
 | **4** fingers (thumb tucked) | fire-once | Volume down |
 | 🖐 **5** fingers | neutral | Resets, fires nothing |
 | 🤘 Rock (index + pinky) | fire-once | Screenshot |
+| 🤙 **L** shape (index + thumb) | fire-once | Switch windows — reopens the last one if nothing's active |
+| Pinky finger alone | fire-once | Task View (same screen as Windows+Tab) |
 | ✌ **2** fingers, swept **left** | swipe | Previous desktop |
 | ✌ **2** fingers, swept **right** | swipe | Next desktop |
 | ✌ **2** fingers, swept **up** | swipe | New desktop |
@@ -490,10 +492,21 @@ direction.
 | `gestures too sensitive` / `gestures too slow` | Retunes hold time and cooldown |
 | `swipes too sensitive` / `swipes too slow` | Retunes how much motion a swipe needs |
 
-Fist, 3, 4, 5 and rock are **rebindable** — edit `config/gestures.json` or say
-`rebind`. **1 finger (mute) and 2 fingers (swipe) are not** — they're built
-in, not config actions, because muting and swiping aren't things you'd want
-to accidentally repoint at a hotkey.
+Fist, 3, 4, 5, rock, the L shape and pinky are **rebindable** — edit
+`config/gestures.json` or say `rebind`. **1 finger (mute) and 2 fingers
+(swipe) are not** — they're built in, not config actions, because muting and
+swiping aren't things you'd want to accidentally repoint at a hotkey.
+
+### The L shape reopens your last window, not just "switch"
+
+Index and thumb extended, everything else curled - a normal Alt-Tab step
+most of the time, bound as `action: switch_window` like `rebind ... to
+switch window` produces. But a bare Alt-Tab is only useful when *something*
+is already active to switch away from; if everything is minimised or the
+desktop itself has focus, it would just open the switcher over nothing. In
+that specific case the gesture instead brings back whichever real window was
+most recently active - "reopen my last window" - without needing a separate
+gesture or pose for it.
 
 ### Hold 1 finger to mute - release to resume
 

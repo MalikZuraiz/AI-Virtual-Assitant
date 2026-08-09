@@ -32,6 +32,15 @@
       "keys": "windows+shift+s",
       "label": "screenshot"
     },
+    "l_sign": {
+      "action": "switch_window",
+      "label": "switch window (reopens the last one if none is active)"
+    },
+    "pinky": {
+      "action": "hotkey",
+      "keys": "windows+tab",
+      "label": "task view"
+    },
     "swipe_left": {
       "action": "hotkey",
       "keys": "ctrl+windows+left",
