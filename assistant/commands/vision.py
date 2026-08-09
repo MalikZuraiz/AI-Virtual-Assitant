@@ -2,7 +2,11 @@
 
 Bindings come from ``config/gestures.json``, so rebinding a gesture - or
 pointing one at an assistant command instead of a hotkey - never needs a code
-change. ``rebind <gesture> to <keys>`` writes that file for you.
+change. ``rebind <gesture> to <keys>`` writes that file for you. Only the
+fire-once poses and the four swipe directions are in the bindings dict - the
+1-finger mute and the 2-finger swipe carrier are structural (see
+assistant.vision.gestures), not config-editable actions, so they are not
+rebindable and never appear in ``config/gestures.json``'s ``bindings``.
 
 There is deliberately no cursor control here. Continuous pointer tracking was
 tried and removed: on a webcam it is jittery, clicks land where your hand was
@@ -20,15 +24,19 @@ from assistant.core.selection import Choice, offer
 from assistant.store.store import ConfigStore
 
 #: Friendly names for the poses, shown in listings. Kept in lockstep with
-#: assistant.vision.gestures.POSES - finger counts only, nothing motion-based.
+#: assistant.vision.gestures.POSES/HOLD_POSE/SWIPE_POSE/SWIPES.
 POSE_HELP = {
     "fist": "closed hand, no fingers up",
-    "one": "1 finger (index)",
-    "two": "2 fingers (index + middle)",
+    "one": "1 finger, HELD - mutes speech for as long as it's shown",
+    "two": "2 fingers, moved - swipes for prev/next/new desktop, minimise",
     "three": "3 fingers (index + middle + ring)",
     "four": "4 fingers, thumb tucked in",
-    "stop": "5 fingers held together, thumb out - flat 'stop' hand",
-    "open_palm": "5 fingers spread apart (neutral - fires nothing, resets the last gesture)",
+    "five": "5 fingers (neutral - fires nothing, resets the last gesture)",
+    "rock": "index + pinky (\"horns\")",
+    "swipe_left": "  ...swept left",
+    "swipe_right": "  ...swept right",
+    "swipe_up": "  ...swept up",
+    "swipe_down": "  ...swept down",
 }
 
 #: Short spoken/chat form of each pose name - used to prefix "what just
@@ -36,13 +44,23 @@ POSE_HELP = {
 #: opened a new desktop" instead of a bare, context-free action name.
 POSE_SHORT = {
     "fist": "fist",
-    "one": "1 finger",
-    "two": "2 fingers",
     "three": "3 fingers",
     "four": "4 fingers",
-    "stop": "stop sign",
-    "open_palm": "open palm",
+    "five": "5 fingers",
+    "rock": "rock sign",
+    "swipe_left": "swipe left",
+    "swipe_right": "swipe right",
+    "swipe_up": "swipe up",
+    "swipe_down": "swipe down",
 }
+
+#: The two structural poses - never in ``bindings``, never rebindable, always
+#: worth a line in ``list gestures`` even though they won't show up by
+#: iterating the bindings dict the way the fire-once poses do.
+_STRUCTURAL_LINES = (
+    "  1 finger, held                              -> mute speech (resumes when lowered)",
+    "  2 fingers, swept                             -> swipe: prev/next/new desktop, minimise",
+)
 
 
 def _gesture_controller(ctx):
@@ -60,6 +78,7 @@ def _gesture_controller(ctx):
         on_command=getattr(ctx, "run_command", None),
         on_stop_speaking=(tts.silence if tts is not None else None),
     )
+
     def _on_fired(name: str, message: str) -> None:
         # Chat + speech, from the camera thread, regardless of whether a job
         # happens to be bound - see Context.announce for why this can't just
@@ -72,6 +91,14 @@ def _gesture_controller(ctx):
         # not worth interrupting speech for on every single one.
         ctx.announce(text, speak=False)
 
+    def _on_mute(muted: bool) -> None:
+        # The 1-finger hold - engages/releases the instant the pose starts
+        # or stops showing (see HoldTracker), not gated by the fire-once
+        # cooldown, so muting never lags behind lowering your finger.
+        if tts is not None:
+            tts.set_muted(muted)
+        ctx.announce("Muted (holding 1 finger)." if muted else "Unmuted.", speak=False)
+
     controller = GestureController(
         on_action=runner,
         bindings=doc.get("bindings") or {},
@@ -80,8 +107,10 @@ def _gesture_controller(ctx):
         hold_frames=int(doc.get("hold_frames", 5)),
         cooldown=float(doc.get("cooldown_seconds", 1.0)),
         confidence=float(doc.get("confidence", 0.5)),
+        min_travel=float(doc.get("swipe_travel", 0.22)),
         on_status=_on_status,
         on_fired=_on_fired,
+        on_mute=_on_mute,
     )
     controller.action_runner = runner  # so stop() can release a held Alt
     ctx.gestures = controller
@@ -105,6 +134,7 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         controller.bindings = doc.get("bindings") or {}
         controller.recogniser.hold_frames = int(doc.get("hold_frames", 5))
         controller.recogniser.cooldown = float(doc.get("cooldown_seconds", 1.0))
+        controller.swipes.min_travel = float(doc.get("swipe_travel", 0.22))
         return controller.start()
 
     @router.register(
@@ -123,7 +153,13 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         runner = getattr(controller, "action_runner", None)
         if runner is not None:
             runner.shutdown()  # make sure Alt is never left held down
-        return controller.stop()
+        result = controller.stop()
+        # Belt and braces alongside GestureController's own finally-block
+        # safety net: stopping gestures must never leave speech muted.
+        tts = getattr(ctx, "tts", None)
+        if tts is not None:
+            tts.set_muted(False)
+        return result
 
     @router.register(
         "list gestures",
@@ -134,9 +170,8 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
     )
     def cmd_list(text, ctx):
         bindings = ctx.store.get("gestures").get("bindings") or {}
-        if not bindings:
-            return "No gestures bound. See config/gestures.json."
         lines = ["Gestures (hold a pose ~1/3 second):"]
+        lines.extend(_STRUCTURAL_LINES)
         for name, binding in bindings.items():
             how = POSE_HELP.get(name, name.replace("_", " "))
             what = binding.get("label") or binding.get("keys") or binding.get("command") or "-"
@@ -144,25 +179,37 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         doc = ctx.store.get("gestures")
         lines.append(
             f"\nHold {doc.get('hold_frames', 5)} frames to confirm; "
-            f"{doc.get('cooldown_seconds', 1.0)}s cooldown between gestures."
+            f"{doc.get('cooldown_seconds', 1.0)}s cooldown between fire-once gestures."
         )
-        lines.append("Rebind with: rebind two to ctrl+windows+d")
+        lines.append("Rebind with: rebind three to ctrl+windows+d")
         return "\n".join(lines)
 
     @router.register(
         "rebind gesture",
         pattern=r"^\s*(?:rebind|bind|map|set)\s+(?:gesture\s+)?([\w ]+?)\s+to\s+(.+?)\s*$",
-        help="rebind two to ctrl+windows+d   /   rebind three to command: what's my day",
+        help="rebind three to ctrl+windows+d   /   rebind rock to command: what's my day",
         category="gestures",
     )
     def cmd_rebind(text, ctx):
+        from assistant.vision.gestures import HOLD_POSE, SWIPE_POSE
+
         match = re.search(
             r"(?:rebind|bind|map|set)\s+(?:gesture\s+)?([\w ]+?)\s+to\s+(.+?)\s*$", text, re.IGNORECASE
         )
         gesture = match.group(1).strip().lower().replace(" ", "_")
         target = match.group(2).strip()
 
-        known = set(ctx.store.get("gestures").get("bindings") or {}) | set(POSE_HELP)
+        if gesture in (HOLD_POSE, SWIPE_POSE):
+            noun = "mute" if gesture == HOLD_POSE else "the swipe directions"
+            return (
+                f"'{gesture}' ({POSE_HELP.get(gesture, gesture)}) isn't rebindable - "
+                f"it's built in, not a config action. Rebind {noun} instead: "
+                f"{'nothing to rebind for muting' if gesture == HOLD_POSE else 'rebind swipe left to ...'}"
+            )
+
+        known = (set(ctx.store.get("gestures").get("bindings") or {}) | set(POSE_HELP)) - {
+            HOLD_POSE, SWIPE_POSE
+        }
         if gesture not in known:
             return (
                 f"I don't have a gesture called '{gesture}'.\n"
@@ -221,3 +268,27 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
             controller.recogniser.hold_frames = hold
             controller.recogniser.cooldown = cooldown
         return f"{note} (hold {hold} frames, {cooldown:.1f}s cooldown)"
+
+    @router.register(
+        "swipe sensitivity",
+        pattern=r"^\s*swipes?\s+(?:are\s+)?(too\s+)?(sensitive|slow|hard|twitchy|sluggish)\s*$",
+        help="swipes too sensitive / swipes too hard  -  retunes how much travel a swipe needs.",
+        category="gestures",
+        instant=True,
+    )
+    def cmd_tune_swipe(text, ctx):
+        word = re.search(r"(sensitive|slow|hard|twitchy|sluggish)", text, re.IGNORECASE).group(1).lower()
+        travel = float(ctx.store.value("gestures", "swipe_travel", 0.22) or 0.22)
+
+        if word in {"sensitive", "twitchy"}:
+            travel = min(travel + 0.05, 0.5)
+            note = "Swipes need more travel now - less likely to fire by accident."
+        else:
+            travel = max(travel - 0.05, 0.08)
+            note = "Swipes need less travel now - easier to trigger."
+
+        ctx.store.set_value("gestures", "swipe_travel", round(travel, 2))
+        controller = getattr(ctx, "gestures", None)
+        if controller is not None:
+            controller.swipes.min_travel = travel
+        return f"{note} (min travel {travel:.2f})"

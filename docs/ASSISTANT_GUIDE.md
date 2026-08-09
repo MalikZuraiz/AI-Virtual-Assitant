@@ -56,7 +56,7 @@ assistant/
   ui/qt/                 app, hud, tray, bridge, theme
   ui/app.py              fallback CustomTkinter window (--legacy-ui)
 config/                  the JSON files you edit
-tests/                   296 tests
+tests/                   331 tests
 ```
 
 ### Threading — why the GUI cannot freeze
@@ -377,6 +377,125 @@ with no risk of a new command forgetting to opt in.
 
 ---
 
+## 3d. Gestures redesigned: three kinds of pose instead of one
+
+Requested directly: swipes back for desktop navigation (removed two rounds
+ago for reliability), rock sign back for screenshots, a real hold-to-mute
+instead of a one-shot stop, and everything "professional, accurate, no
+stuck." All four together meant the pose model itself needed a second axis,
+not just new bindings - a single edge-triggered fire-once recogniser can't
+represent "stays on while held" or "only a swipe while shown."
+
+**Three kinds of pose now, each handled by purpose-built logic:**
+
+- **Fire-once** (fist, 3, 4, 5, rock) - unchanged `GestureRecogniser`: hold to
+  confirm, cooldown, per-pose re-arm.
+- **Held** (`HOLD_POSE = "one"`) - new `HoldTracker`, level-triggered rather
+  than edge-triggered: reports the *transition* into and out of being shown,
+  debounced asymmetrically (3 frames to engage, 2 to release - "resume the
+  moment it's lowered" needs the release edge snappier than the engage edge).
+- **Swipe carrier** (`SWIPE_POSE = "two"`) - the returning `SwipeDetector`
+  from before, but now only ever fed motion samples while this *specific*
+  pose is showing. This one change is what fixes the original reliability
+  problem: the very first swipe implementation tracked motion regardless of
+  hand shape, so a hand mid-swipe (always incidentally holding *some* pose)
+  could fire a stray fire-once action, the swipe, or both. Restricting swipe
+  motion to one pose that has no static action of its own means every other
+  pose is now structurally never a swipe candidate - the two systems cannot
+  collide because they no longer share any frames.
+
+`GestureController._process()` is the frame router: it feeds the mute
+tracker unconditionally (muting must never wait behind a cooldown or another
+pose's debounce), feeds the swipe detector only while `SWIPE_POSE` is
+showing (resetting it on every other frame, so switching shapes never leaves
+stale motion history behind), and feeds everything else to the fire-once
+recogniser *as `None`* when the current pose is the mute or swipe pose - the
+recogniser already treats `None` as "no hand," so the held/swipe poses need
+no special-casing inside it at all; they are simply invisible to it.
+
+**Muting doesn't attempt mid-clip pause/resume.** MCI does technically expose
+`pause`/`resume`, but calling them from a different thread while the worker
+thread is blocked inside a synchronous `play ... wait` call is not reliable
+across every device/driver - and the failure mode of getting that wrong is
+speech stuck fighting a half-resumed clip forever, which is a far worse
+outcome than restarting cleanly. `TextToSpeech.set_muted(True)` stops
+whatever is currently playing outright (MCI `stop` for edge-tts, `Engine.
+stop()` for the pyttsx3 fallback - both already proven reliable, unlike
+pause/resume) and gates the worker loop behind a `threading.Event` so the
+*next* queued line waits until unmuted rather than starting immediately.
+Nothing queued is dropped - unlike `silence()` (the old one-shot "stop
+talking," still available), which drains the queue too. The shutdown
+sentinel is checked *before* the mute gate in `_loop()`, specifically so a
+held mute can never prevent `stop()` from ending the thread.
+
+**Belt-and-braces on top of that:** `GestureController._run()`'s `finally`
+block force-releases the mute tracker however the camera loop ends -
+explicit `stop gestures`, a webcam error, an exception - mirroring the
+existing pattern for a stuck Alt key in `WindowSwitcher.release()`. The `stop
+gestures` command itself also explicitly unmutes as a second line of
+defence. Getting muted and staying muted after gestures have already stopped
+would be exactly the "stuck" failure this whole round was about avoiding.
+
+`classify()` also got one simplification alongside the redesign: the old
+`stop` vs `open_palm` split (fingers together vs spread, both 5-finger-plus-
+thumb shapes) existed only to give the old one-shot stop-talking gesture
+somewhere to live. With muting now owned entirely by the 1-finger hold, that
+distinction serves no purpose - 5 fingers is a single neutral pose again,
+one less geometric judgement call for the classifier to get right.
+
+## 3e. The redesign above, verified against synthetic shapes, still failed live
+
+Reported immediately after 3d shipped: swipes did not fire at all, and
+muting engaged (the gesture was recognised correctly) but speech kept
+playing straight through it. Both bugs were real, and both were invisible to
+the 3d test suite for the same reason - it proved the *state-tracking logic*
+correct against hand-built shapes and a stubbed `_speak_once`, never the real
+camera pipeline or the real MCI audio path. Two fixes, each verified this
+time against the real thing it was missing:
+
+**Muting had no real effect because the interrupt mechanism itself didn't
+work.** `_play_with_mci` used a blocking `mciSendStringW("play ... wait")`
+call, cut off (supposedly) by an MCI `stop` sent from a different thread.
+Cross-thread interruption of a call the target thread is blocked inside is
+not something MCI reliably supports - and live testing confirmed it: audio
+kept playing straight through `set_muted(True)`. Fixed by dropping `wait`
+entirely - `_play_with_mci` now starts playback non-blocking and polls its
+own `status` a few times a second on the *same* thread that owns the MCI
+device, stopping itself the moment `should_stop()` (wired to `tts.muted`)
+comes back true, and checking it once before playback even starts (so a mute
+that lands during edge-tts's network-bound synthesis step never starts that
+clip at all). Verified live against real edge-tts audio: playback now stops
+within single-digit milliseconds of `set_muted(True)`, both directly and
+through the exact `GestureController._process()` → `on_mute` → `tts.
+set_muted()` wiring `assistant/commands/vision.py` uses.
+
+**Swipes never fired because a real wrist swing isn't a clean sequence of
+identical frames.** `_process()` reset the swipe detector's whole motion
+history on *any* single frame that wasn't classified as the exact swipe
+pose - fine against hand-built test shapes, which never misfire, but a real
+swing is fast enough that mediapipe drops or misreads a frame here and there
+(motion blur, momentary tracking loss), and every one of those wiped out
+motion that was accumulating correctly. A genuine swipe attempt could lose
+its whole history to its own motion before ever reaching the travel
+threshold. Fixed with `SWIPE_MISS_TOLERANCE = 2`: up to two consecutive
+off-pose frames are now tolerated without resetting, while a sustained
+switch to a different held pose still resets normally. `SwipeDetector` also
+dropped its minimum sample count from 4 to 3, since a fast, deliberate swing
+- exactly what was asked for - can cover the whole detection window in 3
+frames at 15 FPS, and requiring a 4th could mean the motion was already over
+before there was enough history to judge it.
+
+This round's tests (`tests/test_mci_playback.py`) fake `winmm` to pin the
+exact MCI command sequence - `play` without `wait`, `status` polled, `stop`
+sent only when asked - closing the gap the stubbed-`_speak_once` tests in
+`test_tts_mute.py` couldn't see. `tests/test_gesture_controller_process.py`
+gained a dropped-frame-mid-swipe case, and the existing "switching pose
+resets swipe progress" test now holds a fist for longer than the tolerance
+window so it is still testing a deliberate pose change rather than a frame
+or two of noise.
+
+---
+
 ## 4. Config reference
 
 Files live in [`config/`](../config/) — hand-editable, one per domain. Runtime
@@ -423,7 +542,7 @@ config-driven command and says what changed.
 ## 5. Testing
 
 ```powershell
-.\.venv\Scripts\python -m pytest tests/ -q     # 296 passed
+.\.venv\Scripts\python -m pytest tests/ -q     # 331 passed
 ```
 
 Covers: config store (refresh after hand-edit, broken-JSON resilience, atomic

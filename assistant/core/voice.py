@@ -24,6 +24,7 @@ import queue
 import re
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -67,13 +68,31 @@ def _winmm():
         return None
 
 
-def _play_with_mci(path: Path, register: Callable[[str | None], None] | None = None) -> bool:
-    """Play an audio file synchronously via Windows MCI. False if unavailable.
+def _play_with_mci(
+    path: Path,
+    register: Callable[[str | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
+    """Play an audio file via Windows MCI, polling rather than blocking on
+    "play ... wait". False if unavailable.
 
-    ``register`` is handed the MCI alias while playback runs, so another
-    thread can stop it mid-sentence - which is what the palm-out "stop"
-    gesture needs. Without it the only way to interrupt speech is to wait for
-    the sentence to end, which rather defeats the point.
+    A blocking "wait" call, cut short by an MCI "stop" sent from a *different*
+    thread, turned out not to be reliable enough to build muting on: the
+    interrupting thread has no way to confirm the blocked call ever actually
+    woke up, and in practice it often did not - speech kept going straight
+    through a mute. Starting playback without "wait" and polling this same
+    thread's own status instead means the thread that owns the MCI device is
+    also the one deciding when to stop it, rather than depending on a
+    cross-thread interrupt of a call it is blocked inside.
+
+    ``register`` is handed the MCI alias while playback runs, so
+    :meth:`TextToSpeech._interrupt_current` can also issue a direct MCI stop
+    (used by ``silence()``) - a stop against a non-blocking play is the
+    well-supported case; it is only interrupting a *blocking* wait that is
+    unreliable. ``should_stop`` is polled a few times a second and, if it is
+    ever true, ends playback immediately - checked once before playback even
+    starts too, so muting during the synthesis that happens before this is
+    called never starts the clip at all.
     """
     winmm = _winmm()
     if winmm is None:
@@ -87,7 +106,18 @@ def _play_with_mci(path: Path, register: Callable[[str | None], None] | None = N
                 return False
         if register:
             register(alias)
-        send(f"play {alias} wait", None, 0, None)
+        if should_stop is not None and should_stop():
+            return True
+        send(f"play {alias}", None, 0, None)
+        status = ctypes.create_unicode_buffer(32)
+        while True:
+            if should_stop is not None and should_stop():
+                send(f"stop {alias}", None, 0, None)
+                break
+            send(f"status {alias} mode", status, 32, None)
+            if status.value.strip().lower() != "playing":
+                break
+            time.sleep(0.05)
         return True
     finally:
         if register:
@@ -119,7 +149,15 @@ class TextToSpeech:
         #: MCI alias of whatever is playing right now, so another thread
         #: can cut it off. None when nothing is being spoken.
         self._playing: str | None = None
+        #: The pyttsx3 Engine mid-utterance, if that backend is in use - the
+        #: offline fallback needs its own interrupt handle, since it has no
+        #: MCI alias to stop.
+        self._active_engine = None
         self._play_lock = threading.Lock()
+        #: Set means "may speak"; cleared means "hold new lines until
+        #: unmuted" - see set_muted(). A held-finger gesture toggles this.
+        self._unmuted = threading.Event()
+        self._unmuted.set()
         self._thread = threading.Thread(target=self._loop, name="tts", daemon=True)
         self._thread.start()
 
@@ -169,17 +207,55 @@ class TextToSpeech:
             except queue.Empty:
                 break
 
-        with self._play_lock:
-            alias = self._playing
-        winmm = _winmm()
-        if alias and winmm is not None:
-            # MCI 'stop' ends playback; the playing thread then falls through
-            # its finally block and closes the alias as usual.
-            winmm.mciSendStringW(f"stop {alias}", None, 0, None)
+        stopped = self._interrupt_current()
+        if stopped:
             return "Stopped talking."
         if dropped:
             return f"Dropped {dropped} queued line(s)."
         return "I wasn't saying anything."
+
+    def set_muted(self, muted: bool) -> None:
+        """Mute (cut off whatever is playing, hold new lines) or release.
+
+        This deliberately does not try to pause and resume the interrupted
+        clip mid-word - cross-thread MCI pause/resume is not reliable across
+        every device/driver, and getting speech permanently stuck (silent
+        forever, or stuck fighting a half-resumed clip) would be far worse
+        than restarting at the next sentence. Muting cuts the current line
+        outright; unmuting lets the *next* queued line play normally. Unlike
+        :meth:`silence`, the queue itself is never touched - muting is meant
+        to be momentary and reversible, so nothing queued while muted is
+        lost.
+        """
+        if muted:
+            self._unmuted.clear()
+            self._interrupt_current()
+        else:
+            self._unmuted.set()
+
+    @property
+    def muted(self) -> bool:
+        return not self._unmuted.is_set()
+
+    def _interrupt_current(self) -> bool:
+        """Stop whatever is playing right now, on either backend. Returns
+        True if anything was actually interrupted."""
+        with self._play_lock:
+            alias, engine = self._playing, self._active_engine
+        winmm = _winmm()
+        stopped = False
+        if alias and winmm is not None:
+            # MCI 'stop' ends playback; the playing thread then falls through
+            # its finally block and closes the alias as usual.
+            winmm.mciSendStringW(f"stop {alias}", None, 0, None)
+            stopped = True
+        if engine is not None:
+            try:
+                engine.stop()
+                stopped = True
+            except Exception:  # noqa: BLE001 - best-effort interrupt
+                logger.debug("Could not stop the offline TTS engine", exc_info=True)
+        return stopped
 
     @staticmethod
     def _shorten_urls(text: str) -> str:
@@ -239,6 +315,10 @@ class TextToSpeech:
             text = self._queue.get()
             if text is None:
                 return
+            # Checked *after* the shutdown-sentinel check above, never
+            # before - stop() must always be able to end this thread even
+            # while muted, or a stuck mute would leak the thread on exit too.
+            self._unmuted.wait()
             try:
                 self._speak_once(text)
             except Exception:  # noqa: BLE001 - never let TTS take down the app
@@ -270,11 +350,16 @@ class TextToSpeech:
             return False
 
         try:
-            return _play_with_mci(path, self._register_playing)
+            return _play_with_mci(path, self._register_playing, should_stop=lambda: self.muted)
         finally:
             path.unlink(missing_ok=True)
 
     def _speak_pyttsx3(self, text: str) -> None:
+        if self.muted:
+            # Muted while still on the way to this backend (e.g. edge-tts's
+            # synthesis step failed right as the hold engaged) - don't start
+            # a clip nothing is meant to hear.
+            return
         try:
             import pyttsx3
             from pyttsx3.engine import Engine
@@ -283,11 +368,15 @@ class TextToSpeech:
             return
         # Engine(...) directly, NOT pyttsx3.init() - see the module docstring.
         engine = Engine(driverName=None, debug=False)
+        with self._play_lock:
+            self._active_engine = engine
         try:
             engine.setProperty("rate", 185)
             engine.say(text)
             engine.runAndWait()
         finally:
+            with self._play_lock:
+                self._active_engine = None
             try:
                 engine.stop()
             except Exception:  # noqa: BLE001

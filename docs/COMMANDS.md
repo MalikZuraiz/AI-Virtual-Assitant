@@ -461,128 +461,120 @@ window; right-click for the quick menu.
 
 ## 11. Gestures
 
-Count fingers at the camera. That is the whole vocabulary — it is the one
-thing a webcam reads reliably, which is why everything cleverer was removed.
+Three kinds of gesture, each suited to what it's for: **fire-once** poses for
+a single action, one **held** pose for something you want on for as long as
+you hold it, and **swipes** for the four things that map naturally onto a
+direction.
 
-| Show | Action |
-|---|---|
-| ✊ Fist (0 fingers) | **Previous desktop** (`Ctrl+Win+←`) |
-| ☝ **1** finger | Switch window (`Alt+Tab`) |
-| ✌ **2** fingers | New desktop (`Ctrl+Win+D`) |
-| **3** fingers | Next desktop (`Ctrl+Win+→`) |
-| **4** fingers (thumb tucked) | Minimise everything (`Win+M`) |
-| ✋ **5** fingers *pressed together* | **Stop talking** — cuts off speech mid-sentence |
-| 🖐 **5** fingers *spread apart* | **Neutral** — resets, fires nothing |
-
-Every count does something. **Open palm is the only neutral pose** —
-deliberately singled out, because it is the one shape that could never be
-mistaken for an action. Show it between gestures whenever you want to repeat
-the one you just did (see "repeating a gesture" below). The two five-finger
-poses are the traffic-policeman "stop" (fingers tight together, palm out)
-versus a relaxed open hand (fingers splayed).
+| Show | Kind | Does |
+|---|---|---|
+| ✊ Fist (0 fingers) | fire-once | Close this desktop |
+| ☝ **1** finger, **held** | continuous | **Mute** — speech stops the instant you raise it, resumes the instant you lower it |
+| ✌ **2** fingers, held still | — | Nothing on its own — it's the swipe pose, see below |
+| **3** fingers | fire-once | Volume up |
+| **4** fingers (thumb tucked) | fire-once | Volume down |
+| 🖐 **5** fingers | neutral | Resets, fires nothing |
+| 🤘 Rock (index + pinky) | fire-once | Screenshot |
+| ✌ **2** fingers, swept **left** | swipe | Previous desktop |
+| ✌ **2** fingers, swept **right** | swipe | Next desktop |
+| ✌ **2** fingers, swept **up** | swipe | New desktop |
+| ✌ **2** fingers, swept **down** | swipe | Minimise everything |
 
 | Command | What it does |
 |---|---|
 | `start gestures` | Turns on the webcam and starts watching |
 | `stop gestures` | Stops and frees the webcam |
 | `list gestures` | Every pose and what it does |
-| `rebind two to ctrl+windows+d` | Change a binding |
-| `rebind three to command: what's my day` | Point a gesture at an assistant command |
+| `rebind three to ctrl+windows+d` | Change a fire-once binding |
+| `rebind rock to command: what's my day` | Point a gesture at an assistant command |
 | `gestures too sensitive` / `gestures too slow` | Retunes hold time and cooldown |
+| `swipes too sensitive` / `swipes too slow` | Retunes how much motion a swipe needs |
+
+Fist, 3, 4, 5 and rock are **rebindable** — edit `config/gestures.json` or say
+`rebind`. **1 finger (mute) and 2 fingers (swipe) are not** — they're built
+in, not config actions, because muting and swiping aren't things you'd want
+to accidentally repoint at a hotkey.
+
+### Hold 1 finger to mute - release to resume
+
+This is a *switch*, not a button: speech cuts off the instant you raise one
+finger and picks back up with the next thing you'd have heard the instant you
+lower it. It doesn't try to resume the exact word it cut off mid-sentence -
+resuming a clip that was interrupted from another thread is the kind of thing
+that works fine in a demo and then gets audio stuck forever the one time a
+driver does something unexpected, so it deliberately just moves on to the
+next thing to say instead. If gestures stop for *any* reason - you say `stop
+gestures`, the webcam errors out, anything - a held mute is force-released as
+part of shutting down, so speech can never end up stuck silent because a
+camera disconnected mid-hold.
+
+Releasing needs less confirmation than engaging: raising the finger needs it
+held steadily for a beat (a stray single-frame misread shouldn't cut off
+whatever you're listening to), but lowering it releases almost immediately -
+"resume the moment it's lowered" is the whole point.
+
+### Swipes are gated to one specific pose, on purpose
+
+Show 2 fingers - index and middle, like a peace sign - and move your hand in
+a direction. Held still, 2 fingers does nothing at all; it's a "the next
+thing that happens is a swipe" shape, not an action of its own. Swiping with
+*any other* hand shape - a fist moving, an open hand moving - doesn't
+register as a swipe at all.
+
+That restriction is deliberate and is what makes swipes reliable this time.
+Swipes were tried once before with *any* hand shape, and removed: a hand
+mid-swipe is always incidentally holding some shape, so motion detection and
+pose detection were fighting over the same frames - one swipe could produce a
+stray pose action, the swipe, both, or neither. Gating swipe motion to one
+specific pose that has no static action of its own removes the conflict
+completely - every other pose is *never* a swipe candidate, so a fired pose
+and a fired swipe can no longer collide with each other.
+
+### Repeating a fire-once gesture
+
+Firing the *same* fire-once pose twice in a row needs 5 fingers shown in
+between - hold up 3 fingers twice without resetting, and the second one is
+ignored. This is deliberate: without it, holding a pose a moment too long
+(trivially easy - hands aren't that precise) would fire it twice. A
+*different* pose never needs a reset - 3 fingers then a fist fires both, back
+to back. Swipes and the mute hold are outside this system entirely; they
+don't need a reset gesture between repeats.
 
 ### Every gesture tells you what it did
 
-Firing a gesture now writes a line into the chat and speaks it — the same
+Firing a gesture writes a line into the chat and speaks it - the same
 "opened Chrome for you" confirmation a typed command gives you:
 
 ```
-Gesture (2 fingers): new desktop
-Gesture (fist): previous desktop
+Gesture (fist): close this desktop
+Gesture (swipe right): next desktop
 ```
 
-This used to go nowhere at all - not the chat, not speech, nothing. The
-webcam loop runs on its own background thread, and the status channel it was
-wired to only works on threads the job queue explicitly binds; the gesture
-thread never is one, so every notification silently evaporated the moment it
-was sent. Gesture feedback now goes through a channel built for exactly this
-- any thread, job or not - so it reaches chat and speech every time.
-
-### Repeating a gesture
-
-Firing the *same* pose twice in a row needs an open palm in between - show
-two fingers, then two fingers again, and the second one is ignored until you
-reset. This is deliberate, not a bug: without it, holding a pose a moment too
-long (which is trivially easy - hands are not that precise) would fire it
-twice. A *different* pose never needs a reset - two fingers then three fires
-both, back to back, no palm required in between.
-
-### What was removed, and why it works now
-
-**Swipes are gone.** Motion detection and pose detection fought each other: a
-hand sweeping across the frame is always holding *some* shape, so one
-movement produced a stray action, the swipe, or both. Removing motion
-entirely removed that whole class of collision — and every timing knob it
-needed.
-
-**Rock, OK, call sign, thumbs up/down are gone.** Each rested on a fiddly
-geometric test that only held up in good light at one hand angle. A gesture
-that works most of the time is worse than no gesture, because you stop
-trusting the feature.
-
-**The reason it often did nothing at all:** after any gesture fired, the
-recogniser disarmed and *only an open palm re-armed it*. So two fingers
-followed by three did nothing — the second pose was blocked until you
-happened to flash a palm. Re-arming is per-pose now: a different shape always
-fires, and only repeating the *same* shape needs a neutral in between.
-
-**Four fingers vs five** used to be decided by measuring the thumb against
-the index knuckle, where a thumb held alongside the index — exactly what a
-flat hand does — was ambiguous. It is now measured against the *pinky*
-knuckle: a folded thumb crosses the palm and lands near it, an extended one
-is far outside. Clean separation.
-
-**`start gestures` crashed outright, and deleted gestures kept coming back.**
-Two separate bugs, both fixed:
-
-- The command wiring still called the controller with a `min_travel=`
-  argument left over from the swipe-based version, which no longer accepts
-  it — every `start gestures` failed with a `TypeError` before the camera
-  even opened.
-- More subtly: the seed content used to fill in a config file that doesn't
-  exist yet still listed every old swipe/thumbs/rock/OK/call binding. Config
-  files are merged with that seed on every load so new settings appear in
-  old files automatically — but that merge was recursive for *every* nested
-  dict, including the gesture bindings themselves. So deleting a binding from
-  `config/gestures.json` never actually stuck: the seed's copy of it merged
-  back in on the very next load, which is why gestures kept "colliding" even
-  after a rewrite that had already removed them from the file. Registries
-  like `bindings` (and chat `modes`) are now replaced wholesale from your
-  file when present, the same way a list already was — a deletion is a
-  deletion.
-
-**There was no way back to the previous desktop.** Fist used to be a second
-neutral pose (alongside open palm), which wasted an entire finger-count on
-nothing. It is now bound to previous desktop, pairing naturally with three
-fingers → next desktop. Fist detection needed no changes to make this safe —
-it was already the one pose with zero ambiguity (no fingers extended, full
-stop), so handing it a real action costs nothing in reliability.
+This is carried by a channel built specifically for the webcam loop's own
+background thread - the normal per-command status channel only works on
+threads the job queue explicitly hands work to, and the gesture camera loop
+never is one, so anything sent through it evaporated silently before this was
+fixed.
 
 ### Staying smooth
 
-- **15 FPS**, down from 20. Static poses need no motion resolution, so this
-  is pure headroom given back to whatever you're actually doing.
-- **Detection threshold 0.5**, down from 0.6 — missing your hand entirely is
-  the worst failure, and the hold requirement already filters weak frames.
-- **Hold ~5 frames** (about a third of a second) before anything fires.
-- **1 second cooldown** after each gesture.
+- **15 FPS.** Static poses need no motion resolution, so this is headroom
+  given back to whatever you're actually doing; swipes get plenty of samples
+  at this rate too.
+- **Detection threshold 0.5.** Missing your hand entirely is the worst
+  failure, and the hold requirement already filters weak frames.
+- **Hold ~5 frames** (about a third of a second) before a fire-once gesture
+  fires. **1 second cooldown** after each one, shared with swipes, so a swipe
+  immediately followed by settling into another pose can't double-fire.
 - **One hand**, deliberately: two roughly doubles per-frame inference cost.
 
 If it fires too easily, say `gestures too sensitive`. If you hold poses and
-nothing happens, `gestures too slow`.
+nothing happens, `gestures too slow`. If swipes need too much arm, `swipes
+too sensitive`; if they trigger from small movements, `swipes too slow`.
 
-Bindings live in `config/gestures.json`. Any pose can fire a hotkey
-(`"action": "hotkey"`), a full assistant command (`"action": "command"`), or
-stop the speech (`"action": "stop_speaking"`).
+Bindings live in `config/gestures.json`. Any fire-once pose or swipe
+direction can fire a hotkey (`"action": "hotkey"`) or a full assistant
+command (`"action": "command"`).
 
 ---
 

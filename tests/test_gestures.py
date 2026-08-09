@@ -1,17 +1,16 @@
-"""Finger-count gesture recognition.
-
-The whole vocabulary is "how many fingers are up", plus one bit for whether
-they are pressed together. These tests pin the two things that made earlier
-versions unusable: poses being confused with each other, and the recogniser
-silently refusing to fire.
+"""Gesture recognition: fire-once poses, the held mute pose, and swipes
+gated to one specific pose so they can't collide with anything else.
 """
 from types import SimpleNamespace
 
 from assistant.vision.gestures import (
+    HOLD_POSE,
     NEUTRAL,
+    SWIPE_POSE,
     GestureRecogniser,
+    HoldTracker,
+    SwipeDetector,
     classify,
-    finger_spread,
     thumb_is_out,
 )
 from assistant.vision.handtracking import analyse
@@ -22,29 +21,22 @@ def _lm(x, y):
 
 
 def _hand(*, index=False, middle=False, ring=False, pinky=False,
-          thumb_pos=None, spread=0.06):
-    """Build 21 landmarks for a finger-count pose.
+          thumb_pos=None, offset=(0.0, 0.0)):
+    """Build 21 landmarks for a finger-count pose."""
+    dx, dy = offset
+    points = [_lm(0.5 + dx, 0.5 + dy) for _ in range(21)]
+    points[0] = _lm(0.50 + dx, 0.90 + dy)      # wrist
+    points[9] = _lm(0.50 + dx, 0.62 + dy)      # middle MCP
+    points[5] = _lm(0.42 + dx, 0.64 + dy)      # index MCP
+    points[17] = _lm(0.58 + dx, 0.64 + dy)     # pinky MCP
 
-    ``spread`` is the horizontal gap between neighbouring fingertips; small
-    means fingers pressed together, large means splayed.
-    """
-    points = [_lm(0.5, 0.5) for _ in range(21)]
-    points[0] = _lm(0.50, 0.90)      # wrist
-    points[9] = _lm(0.50, 0.62)      # middle MCP  -> size = 0.28
-    points[5] = _lm(0.42, 0.64)      # index MCP   -> palm width = 0.16
-    points[17] = _lm(0.58, 0.64)     # pinky MCP
-
-    # Fingertips fan out from the middle of the hand by `spread` each.
-    columns = [0.50 - 1.5 * spread, 0.50 - 0.5 * spread,
-               0.50 + 0.5 * spread, 0.50 + 1.5 * spread]
     for is_up, column, (tip, pip) in zip(
-        (index, middle, ring, pinky), columns, ((8, 6), (12, 10), (16, 14), (20, 18))
+        (index, middle, ring, pinky), (0.44, 0.48, 0.52, 0.56), ((8, 6), (12, 10), (16, 14), (20, 18))
     ):
-        points[pip] = _lm(column, 0.66)
-        points[tip] = _lm(column, 0.30 if is_up else 0.70)
+        points[pip] = _lm(column + dx, 0.66 + dy)
+        points[tip] = _lm(column + dx, (0.30 if is_up else 0.70) + dy)
 
-    # Thumb: tucked across the palm by default (close to the pinky knuckle).
-    points[4] = _lm(*thumb_pos) if thumb_pos else _lm(0.52, 0.62)
+    points[4] = _lm(*(thumb_pos or (0.52 + dx, 0.62 + dy)))
     return analyse(points)
 
 
@@ -52,28 +44,10 @@ def _hand(*, index=False, middle=False, ring=False, pinky=False,
 THUMB_OUT = (0.22, 0.58)
 
 
-# -- the geometry the poses rest on ------------------------------------------
+# -- pose classification ------------------------------------------------
 
 
-def test_a_tucked_thumb_is_not_out():
-    assert thumb_is_out(_hand(index=True, middle=True, ring=True, pinky=True)) is False
-
-
-def test_an_extended_thumb_is_out():
-    hand = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
-    assert thumb_is_out(hand) is True
-
-
-def test_spread_separates_a_stop_sign_from_an_open_palm():
-    together = _hand(index=True, middle=True, ring=True, pinky=True, spread=0.03)
-    splayed = _hand(index=True, middle=True, ring=True, pinky=True, spread=0.14)
-    assert finger_spread(together) < finger_spread(splayed)
-
-
-# -- one pose per finger count -----------------------------------------------
-
-
-def test_each_finger_count_is_its_own_pose():
+def test_each_fire_once_pose():
     assert classify(_hand()) == "fist"
     assert classify(_hand(index=True)) == "one"
     assert classify(_hand(index=True, middle=True)) == "two"
@@ -81,54 +55,57 @@ def test_each_finger_count_is_its_own_pose():
     assert classify(_hand(index=True, middle=True, ring=True, pinky=True)) == "four"
 
 
-def test_five_fingers_together_is_stop_and_spread_is_open_palm():
-    stop = _hand(index=True, middle=True, ring=True, pinky=True,
-                 thumb_pos=THUMB_OUT, spread=0.03)
-    palm = _hand(index=True, middle=True, ring=True, pinky=True,
-                 thumb_pos=THUMB_OUT, spread=0.14)
-    assert classify(stop) == "stop"
-    assert classify(palm) == "open_palm"
+def test_four_fingers_with_thumb_out_is_five():
+    hand = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
+    assert classify(hand) == "five"
 
 
-def test_four_is_distinct_from_stop():
-    """The pair that used to collide: both have four fingers up."""
-    four = _hand(index=True, middle=True, ring=True, pinky=True, spread=0.03)
-    stop = _hand(index=True, middle=True, ring=True, pinky=True,
-                 thumb_pos=THUMB_OUT, spread=0.03)
-    assert classify(four) == "four"
-    assert classify(stop) == "stop"
+def test_rock_sign_is_distinct_from_two_fingers():
+    """Both are 2-finger counts, but a completely different pair - rock
+    (index + pinky) must never be confused with the swipe-carrier pose
+    (index + middle)."""
+    rock = _hand(index=True, pinky=True)
+    two = _hand(index=True, middle=True)
+    assert classify(rock) == "rock"
+    assert classify(two) == "two"
 
 
-def test_odd_finger_combinations_are_rejected_rather_than_guessed():
-    """A lone middle finger is a misread of a curling hand, not a signal."""
+def test_odd_combinations_are_rejected_rather_than_guessed():
     assert classify(_hand(middle=True)) == "none"
-    assert classify(_hand(index=True, pinky=True)) == "none"
     assert classify(_hand(index=True, middle=True, pinky=True)) == "none"
+    assert classify(_hand(index=True, ring=True)) == "none"
 
 
-def test_open_palm_is_the_only_neutral_pose():
-    """Fist carries an action (previous desktop) - only open palm resets."""
-    assert NEUTRAL == {"none", "open_palm"}
-    assert "fist" not in NEUTRAL
-    assert "stop" not in NEUTRAL
+def test_thumb_out_measured_against_the_pinky_knuckle():
+    tucked = _hand(index=True, middle=True, ring=True, pinky=True)
+    assert thumb_is_out(tucked) is False
+    spread = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
+    assert thumb_is_out(spread) is True
 
 
-# -- debouncing --------------------------------------------------------------
+def test_only_five_is_neutral():
+    assert NEUTRAL == {"none", "five"}
+    assert HOLD_POSE == "one"
+    assert SWIPE_POSE == "two"
+
+
+# -- fire-once debouncing (fist / three / four / five / rock) -----------
 
 
 def test_a_pose_must_be_held_before_it_fires():
     recogniser = GestureRecogniser(hold_frames=4, cooldown=0.0)
-    two = _hand(index=True, middle=True)
-    fired = [recogniser.update(two, now=i * 0.05) for i in range(4)]
+    three = _hand(index=True, middle=True, ring=True)
+    fired = [recogniser.update(three, now=i * 0.05) for i in range(4)]
     assert fired[:3] == [None, None, None]
-    assert fired[3] == "two"
+    assert fired[3] == "three"
 
 
 def test_a_single_frame_misread_never_fires():
     recogniser = GestureRecogniser(hold_frames=5, cooldown=0.0)
-    two, three = _hand(index=True, middle=True), _hand(index=True, middle=True, ring=True)
+    three = _hand(index=True, middle=True, ring=True)
+    four = _hand(index=True, middle=True, ring=True, pinky=True)
     events = [
-        recogniser.update(three if i % 3 == 2 else two, now=i * 0.05)
+        recogniser.update(four if i % 3 == 2 else three, now=i * 0.05)
         for i in range(12)
     ]
     assert all(event is None for event in events)
@@ -136,83 +113,202 @@ def test_a_single_frame_misread_never_fires():
 
 def test_holding_a_pose_fires_only_once():
     recogniser = GestureRecogniser(hold_frames=2, cooldown=0.0)
-    two = _hand(index=True, middle=True)
-    events = [recogniser.update(two, now=i * 0.05) for i in range(20)]
-    assert events.count("two") == 1
+    three = _hand(index=True, middle=True, ring=True)
+    events = [recogniser.update(three, now=i * 0.05) for i in range(20)]
+    assert events.count("three") == 1
 
 
 def test_a_different_pose_fires_without_needing_a_neutral_first():
-    """The bug that made gestures feel dead.
-
-    Firing disarmed the recogniser, and only an open palm re-armed it - so
-    two fingers followed by three did nothing at all until you happened to
-    flash a palm. Re-arming is per-pose now.
-    """
+    """Firing used to disarm the recogniser, re-armed only by the neutral
+    pose - so a different gesture right after one that just fired did
+    nothing until you flashed five fingers in between. Fixed: re-arming is
+    per-pose now."""
     recogniser = GestureRecogniser(hold_frames=2, cooldown=0.0)
     fires = []
     for pose_hand in (
-        _hand(index=True, middle=True),                              # two
-        _hand(index=True, middle=True, ring=True),                   # three
-        _hand(index=True, middle=True, ring=True, pinky=True),       # four
-        _hand(index=True),                                           # one
+        _hand(index=True, middle=True, ring=True),                    # three
+        _hand(index=True, middle=True, ring=True, pinky=True),        # four
+        _hand(),                                                       # fist
     ):
         for i in range(3):
             fired = recogniser.update(pose_hand, now=len(fires) * 10 + i * 0.05)
             if fired:
                 fires.append(fired)
-    assert fires == ["two", "three", "four", "one"]
+    assert fires == ["three", "four", "fist"]
 
 
 def test_repeating_the_same_pose_needs_a_neutral_in_between():
     recogniser = GestureRecogniser(hold_frames=2, cooldown=0.0)
-    two = _hand(index=True, middle=True)
-    palm = _hand(index=True, middle=True, ring=True, pinky=True,
-                 thumb_pos=THUMB_OUT, spread=0.14)
+    three = _hand(index=True, middle=True, ring=True)
+    five = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
 
-    fires = [f for i in range(4) if (f := recogniser.update(two, now=i * 0.05))]
-    assert fires == ["two"]
+    fires = [f for i in range(4) if (f := recogniser.update(three, now=i * 0.05))]
+    assert fires == ["three"]
 
-    # Straight back to two: still one event.
-    fires += [f for i in range(4) if (f := recogniser.update(two, now=1 + i * 0.05))]
-    assert fires == ["two"]
+    fires += [f for i in range(4) if (f := recogniser.update(three, now=1 + i * 0.05))]
+    assert fires == ["three"]  # still one event - no neutral shown yet
 
-    # A palm re-arms it, so the same pose can fire again.
     for i in range(3):
-        recogniser.update(palm, now=2 + i * 0.05)
-    fires += [f for i in range(4) if (f := recogniser.update(two, now=3 + i * 0.05))]
-    assert fires == ["two", "two"]
+        recogniser.update(five, now=2 + i * 0.05)
+    fires += [f for i in range(4) if (f := recogniser.update(three, now=3 + i * 0.05))]
+    assert fires == ["three", "three"]
 
 
 def test_cooldown_blocks_a_second_gesture():
     recogniser = GestureRecogniser(hold_frames=1, cooldown=5.0)
-    two, three = _hand(index=True, middle=True), _hand(index=True, middle=True, ring=True)
-    assert recogniser.update(two, now=0.0) == "two"
+    three = _hand(index=True, middle=True, ring=True)
+    four = _hand(index=True, middle=True, ring=True, pinky=True)
+    assert recogniser.update(three, now=0.0) == "three"
     for i in range(10):
-        assert recogniser.update(three, now=0.1 + i * 0.05) is None
+        assert recogniser.update(four, now=0.1 + i * 0.05) is None
 
 
 def test_losing_the_hand_resets_everything():
     recogniser = GestureRecogniser(hold_frames=3, cooldown=0.0)
-    two = _hand(index=True, middle=True)
-    recogniser.update(two, now=0.0)
-    recogniser.update(two, now=0.05)
+    three = _hand(index=True, middle=True, ring=True)
+    recogniser.update(three, now=0.0)
+    recogniser.update(three, now=0.05)
     assert recogniser.update(None, now=0.1) is None
-    assert recogniser.update(two, now=0.15) is None
-    assert recogniser.update(two, now=0.20) is None
-    assert recogniser.update(two, now=0.25) == "two"
+    assert recogniser.update(three, now=0.15) is None
+    assert recogniser.update(three, now=0.20) is None
+    assert recogniser.update(three, now=0.25) == "three"
 
 
-def test_open_palm_itself_never_fires():
+def test_five_itself_never_fires():
     recogniser = GestureRecogniser(hold_frames=2, cooldown=0.0)
-    palm = _hand(index=True, middle=True, ring=True, pinky=True,
-                 thumb_pos=THUMB_OUT, spread=0.14)
-    events = [recogniser.update(palm, now=i * 0.05) for i in range(10)]
+    five = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
+    events = [recogniser.update(five, now=i * 0.05) for i in range(10)]
     assert all(event is None for event in events)
 
 
-def test_a_fist_fires_previous_desktop_not_neutral():
-    """The gesture this round added - a fist is now an action, not a reset."""
-    recogniser = GestureRecogniser(hold_frames=3, cooldown=0.0)
-    fist = _hand()
-    fires = [f for i in range(6) if (f := recogniser.update(fist, now=i * 0.05))]
-    assert fires == ["fist"]
+def test_mark_fired_shares_the_cooldown_clock_with_swipes():
+    """A swipe and a fire-once pose must share one cooldown, or a swipe
+    immediately followed by settling into another pose could double-fire."""
+    recogniser = GestureRecogniser(hold_frames=1, cooldown=5.0)
+    recogniser.mark_fired("swipe_left", now=0.0)
+    three = _hand(index=True, middle=True, ring=True)
+    assert recogniser.update(three, now=0.1) is None
+    assert recogniser.is_cooling_down(0.1) is True
+
+
+# -- the held mute pose (HoldTracker) ------------------------------------
+
+
+def test_hold_tracker_needs_consecutive_frames_to_engage():
+    tracker = HoldTracker(enter_frames=3, exit_frames=2)
+    assert tracker.update(True) is None
+    assert tracker.update(True) is None
+    assert tracker.update(True) is True
+    assert tracker.active is True
+
+
+def test_hold_tracker_releases_faster_than_it_engages():
+    """Entering needs debounce (avoid a stray misread engaging mute);
+    leaving should feel immediate - "resume when the gesture is no more"."""
+    tracker = HoldTracker(enter_frames=3, exit_frames=2)
+    for _ in range(3):
+        tracker.update(True)
+    assert tracker.active is True
+    assert tracker.update(False) is None
+    assert tracker.update(False) is False
+    assert tracker.active is False
+
+
+def test_a_single_dropped_frame_does_not_release_early():
+    tracker = HoldTracker(enter_frames=3, exit_frames=2)
+    for _ in range(3):
+        tracker.update(True)
+    assert tracker.update(False) is None  # one miss - not enough to release
+    assert tracker.update(True) is None   # back to held - still active, no edge
+    assert tracker.active is True
+
+
+def test_reset_force_releases_and_reports_it():
+    tracker = HoldTracker(enter_frames=3, exit_frames=2)
+    for _ in range(3):
+        tracker.update(True)
+    assert tracker.active is True
+    assert tracker.reset() is False
+    assert tracker.active is False
+
+
+def test_reset_when_not_active_reports_nothing():
+    tracker = HoldTracker()
+    assert tracker.reset() is None
+
+
+def test_no_edge_reported_while_steadily_held_or_steadily_released():
+    tracker = HoldTracker(enter_frames=2, exit_frames=2)
+    assert tracker.update(True) is None
+    assert tracker.update(True) is True
+    assert tracker.update(True) is None
+    assert tracker.update(True) is None
+
+
+# -- swipes, gated to the two-finger pose ---------------------------------
+
+
+def test_a_fast_horizontal_move_is_a_swipe():
+    detector = SwipeDetector(min_travel=0.2)
+    result = None
+    for i in range(6):
+        result = detector.update((0.2 + i * 0.06, 0.5), now=i * 0.05) or result
+    assert result == "swipe_right"
+
+
+def test_direction_is_read_correctly():
+    detector = SwipeDetector(min_travel=0.2)
+    result = None
+    for i in range(6):
+        result = detector.update((0.8 - i * 0.06, 0.5), now=i * 0.05) or result
+    assert result == "swipe_left"
+
+    detector.reset()
+    result = None
+    for i in range(6):
+        result = detector.update((0.5, 0.8 - i * 0.06), now=i * 0.05) or result
+    assert result == "swipe_up"
+
+    detector.reset()
+    result = None
+    for i in range(6):
+        result = detector.update((0.5, 0.2 + i * 0.06), now=i * 0.05) or result
+    assert result == "swipe_down"
+
+
+def test_slow_drift_is_not_a_swipe():
+    detector = SwipeDetector(window_seconds=0.35, min_travel=0.22)
+    result = None
+    for i in range(30):
+        result = detector.update((0.2 + i * 0.02, 0.5), now=i * 0.1) or result
+    assert result is None
+
+
+def test_a_diagonal_move_is_rejected_as_ambiguous():
+    detector = SwipeDetector(min_travel=0.2, axis_ratio=1.8)
+    result = None
+    for i in range(6):
+        result = detector.update((0.2 + i * 0.06, 0.2 + i * 0.06), now=i * 0.05) or result
+    assert result is None
+
+
+def test_the_swipe_detector_rearms_after_firing():
+    detector = SwipeDetector(min_travel=0.2)
+    for i in range(6):
+        detector.update((0.1 + i * 0.06, 0.5), now=i * 0.05)
+    assert detector.update((0.5, 0.5), now=0.35) is None
+
+
+def test_holding_a_pose_other_than_two_fingers_is_never_treated_as_a_swipe():
+    """The whole point of gating swipes to one pose: showing a fist while
+    moving your hand around must never be read as a swipe."""
+    detector = SwipeDetector(min_travel=0.2)
+    result = None
+    for i in range(6):
+        # A fist sweeping across the frame - this must be fed to the
+        # detector by nobody, since GestureController only updates it while
+        # SWIPE_POSE is showing. This test documents the detector's own
+        # behaviour in isolation: it doesn't know or care what pose is
+        # showing, which is exactly why gating happens one level up.
+        result = detector.update((0.2 + i * 0.06, 0.5), now=i * 0.05) or result
+    assert result == "swipe_right"  # the detector itself is pose-agnostic

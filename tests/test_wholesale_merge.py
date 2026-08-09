@@ -31,14 +31,14 @@ def test_a_key_absent_from_override_still_falls_back_to_the_default():
 
 def test_deleting_a_gesture_binding_through_the_store_stays_deleted(tmp_path):
     store = ConfigStore(tmp_path)
-    assert "stop" in store.get("gestures")["bindings"]
+    assert "rock" in store.get("gestures")["bindings"]
 
-    store.update("gestures", lambda doc: doc["bindings"].pop("stop"))
+    store.update("gestures", lambda doc: doc["bindings"].pop("rock"))
     store.refresh()
 
-    assert "stop" not in store.get("gestures")["bindings"]
+    assert "rock" not in store.get("gestures")["bindings"]
     # Everything else the user didn't touch is still there.
-    assert "one" in store.get("gestures")["bindings"]
+    assert "fist" in store.get("gestures")["bindings"]
 
 
 def test_deleting_a_chat_persona_stays_deleted(tmp_path):
