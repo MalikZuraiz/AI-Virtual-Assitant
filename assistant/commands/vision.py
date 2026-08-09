@@ -19,23 +19,29 @@ from assistant.core.router import CommandRouter
 from assistant.core.selection import Choice, offer
 from assistant.store.store import ConfigStore
 
-#: Friendly names for the poses, shown in listings.
+#: Friendly names for the poses, shown in listings. Kept in lockstep with
+#: assistant.vision.gestures.POSES - finger counts only, nothing motion-based.
 POSE_HELP = {
-    "swipe_left": "sweep your hand left",
-    "swipe_right": "sweep your hand right",
-    "swipe_up": "sweep your hand up",
-    "swipe_down": "sweep your hand down",
-    "fist": "closed fist",
-    "point": "index finger only",
-    "peace": "index + middle (V sign)",
-    "three": "index + middle + ring",
-    "four": "four fingers, thumb tucked in",
-    "open_palm": "open hand, all five",
-    "thumbs_up": "thumbs up",
-    "thumbs_down": "thumbs down",
-    "ok": "thumb + index touching, others up",
-    "rock": "index + pinky (horns)",
-    "call": "thumb + pinky (phone)",
+    "fist": "closed hand, no fingers up",
+    "one": "1 finger (index)",
+    "two": "2 fingers (index + middle)",
+    "three": "3 fingers (index + middle + ring)",
+    "four": "4 fingers, thumb tucked in",
+    "stop": "5 fingers held together, thumb out - flat 'stop' hand",
+    "open_palm": "5 fingers spread apart (neutral - fires nothing, resets the last gesture)",
+}
+
+#: Short spoken/chat form of each pose name - used to prefix "what just
+#: happened" announcements, so "opened a new desktop" reads as "2 fingers:
+#: opened a new desktop" instead of a bare, context-free action name.
+POSE_SHORT = {
+    "fist": "fist",
+    "one": "1 finger",
+    "two": "2 fingers",
+    "three": "3 fingers",
+    "four": "4 fingers",
+    "stop": "stop sign",
+    "open_palm": "open palm",
 }
 
 
@@ -54,16 +60,28 @@ def _gesture_controller(ctx):
         on_command=getattr(ctx, "run_command", None),
         on_stop_speaking=(tts.silence if tts is not None else None),
     )
+    def _on_fired(name: str, message: str) -> None:
+        # Chat + speech, from the camera thread, regardless of whether a job
+        # happens to be bound - see Context.announce for why this can't just
+        # be ctx.progress (thread-local; the camera loop is never job-bound).
+        short = POSE_SHORT.get(name, name.replace("_", " "))
+        ctx.announce(f"Gesture ({short}): {message}", speak=True)
+
+    def _on_status(text: str) -> None:
+        # Lifecycle bookkeeping (camera ready/stopped) - worth a chat line,
+        # not worth interrupting speech for on every single one.
+        ctx.announce(text, speak=False)
+
     controller = GestureController(
         on_action=runner,
         bindings=doc.get("bindings") or {},
         camera_index=int(doc.get("camera_index", 0)),
-        fps_limit=int(doc.get("fps_limit", 20)),
-        hold_frames=int(doc.get("hold_frames", 6)),
-        cooldown=float(doc.get("cooldown_seconds", 1.2)),
-        min_travel=float(doc.get("swipe_travel", 0.22)),
-        confidence=float(doc.get("confidence", 0.6)),
-        on_status=ctx.progress,
+        fps_limit=int(doc.get("fps_limit", 15)),
+        hold_frames=int(doc.get("hold_frames", 5)),
+        cooldown=float(doc.get("cooldown_seconds", 1.0)),
+        confidence=float(doc.get("confidence", 0.5)),
+        on_status=_on_status,
+        on_fired=_on_fired,
     )
     controller.action_runner = runner  # so stop() can release a held Alt
     ctx.gestures = controller
@@ -85,9 +103,8 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         # Pick up any hand-edited bindings without needing a restart.
         doc = ctx.store.get("gestures")
         controller.bindings = doc.get("bindings") or {}
-        controller.recogniser.hold_frames = int(doc.get("hold_frames", 6))
-        controller.recogniser.cooldown = float(doc.get("cooldown_seconds", 1.2))
-        controller.recogniser.swipes.min_travel = float(doc.get("swipe_travel", 0.22))
+        controller.recogniser.hold_frames = int(doc.get("hold_frames", 5))
+        controller.recogniser.cooldown = float(doc.get("cooldown_seconds", 1.0))
         return controller.start()
 
     @router.register(
@@ -119,23 +136,23 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
         bindings = ctx.store.get("gestures").get("bindings") or {}
         if not bindings:
             return "No gestures bound. See config/gestures.json."
-        lines = ["Gestures (hold a pose ~0.25s, or swipe):"]
+        lines = ["Gestures (hold a pose ~1/3 second):"]
         for name, binding in bindings.items():
             how = POSE_HELP.get(name, name.replace("_", " "))
             what = binding.get("label") or binding.get("keys") or binding.get("command") or "-"
-            lines.append(f"  {how:<28} -> {what}")
+            lines.append(f"  {how:<42} -> {what}")
         doc = ctx.store.get("gestures")
         lines.append(
-            f"\nHold {doc.get('hold_frames', 6)} frames to confirm; "
-            f"{doc.get('cooldown_seconds', 1.2)}s cooldown between gestures."
+            f"\nHold {doc.get('hold_frames', 5)} frames to confirm; "
+            f"{doc.get('cooldown_seconds', 1.0)}s cooldown between gestures."
         )
-        lines.append("Rebind with: rebind peace to ctrl+windows+d")
+        lines.append("Rebind with: rebind two to ctrl+windows+d")
         return "\n".join(lines)
 
     @router.register(
         "rebind gesture",
         pattern=r"^\s*(?:rebind|bind|map|set)\s+(?:gesture\s+)?([\w ]+?)\s+to\s+(.+?)\s*$",
-        help="rebind peace to ctrl+windows+d   /   rebind fist to command: what's my day",
+        help="rebind two to ctrl+windows+d   /   rebind three to command: what's my day",
         category="gestures",
     )
     def cmd_rebind(text, ctx):
@@ -186,8 +203,8 @@ def register(router: CommandRouter, store: ConfigStore) -> None:
             r"(sensitive|slow|fast|twitchy|sluggish|jumpy)", text, re.IGNORECASE
         ).group(1).lower()
         doc = ctx.store.get("gestures")
-        hold = int(doc.get("hold_frames", 6))
-        cooldown = float(doc.get("cooldown_seconds", 1.2))
+        hold = int(doc.get("hold_frames", 5))
+        cooldown = float(doc.get("cooldown_seconds", 1.0))
 
         if word in {"sensitive", "twitchy", "jumpy", "fast"}:
             # Firing by accident: demand a longer hold and a longer gap.

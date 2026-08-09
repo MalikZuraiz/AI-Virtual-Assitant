@@ -63,16 +63,41 @@ class RefreshReport:
         return text
 
 
-def deep_merge(base: dict, override: dict) -> dict:
+#: Top-level keys, per config domain, that are *user-owned registries* -
+#: name-keyed maps the user adds to and deletes from - rather than nested
+#: settings-with-sub-settings. These are replaced wholesale from the user's
+#: file when present, exactly like a list, instead of being recursively
+#: merged with the seed defaults.
+#:
+#: Without this, deleting an entry never actually sticks: the next load
+#: merges the seed's version of that key back in key-by-key, so a removed
+#: gesture binding or chat persona silently reappears. That is not
+#: hypothetical - it is exactly what made "gestures keep colliding" survive
+#: a rewrite that had already deleted every stale binding from the JSON on
+#: disk: the seed in defaults.py still listed them, and every load re-merged
+#: them back into the in-memory document no matter what the file said.
+WHOLESALE_DICT_KEYS: dict[str, frozenset[str]] = {
+    "gestures": frozenset({"bindings"}),
+    "personas": frozenset({"modes"}),
+}
+
+
+def deep_merge(base: dict, override: dict, wholesale: frozenset[str] = frozenset()) -> dict:
     """Return ``base`` with ``override`` layered on top (override wins).
 
     Nested dicts merge key-by-key; lists are replaced wholesale, because a
     user who trimmed a list down to two entries means it, and re-adding the
-    defaults would be infuriating.
+    defaults would be infuriating. ``wholesale`` extends that same treatment
+    to specific top-level dict keys that are really registries, not settings
+    - see :data:`WHOLESALE_DICT_KEYS`. Only applies at this call's own level;
+    it is not threaded into the recursive calls, because those keys only
+    exist at the top of a config document.
     """
     out = copy.deepcopy(base)
     for key, value in override.items():
-        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
+        if key in wholesale:
+            out[key] = copy.deepcopy(value)
+        elif key in out and isinstance(out[key], dict) and isinstance(value, dict):
             out[key] = deep_merge(out[key], value)
         else:
             out[key] = copy.deepcopy(value)
@@ -144,7 +169,9 @@ class ConfigStore:
                     self._docs.setdefault(name, _defaults.default_for(name))
                     continue
 
-                merged = deep_merge(_defaults.default_for(name), raw)
+                merged = deep_merge(
+                    _defaults.default_for(name), raw, wholesale=WHOLESALE_DICT_KEYS.get(name, frozenset())
+                )
                 previous = self._docs.get(name)
                 self._docs[name] = merged
                 self._stamps[name] = stamp

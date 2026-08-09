@@ -4,7 +4,14 @@ Everything crossing a thread boundary goes through a Qt signal:
 
 * worker -> GUI: :class:`AssistantBridge` (job results, progress, reminders)
 * hotkey thread -> GUI: :class:`HotkeyBridge`
+* mic/STT thread -> GUI: :class:`ListenerBridge` (state, transcript, errors)
 * GUI -> worker: ``Assistant.handle`` returns immediately and queues the work
+
+``QTimer.singleShot`` is not a substitute for a signal here and must never be
+used to hop from a plain ``threading.Thread`` onto the GUI thread - it only
+fires if the *calling* thread has its own active Qt event loop, which a bare
+worker thread does not. It silently never fires otherwise: no exception, no
+log, nothing - see :class:`ListenerBridge` for the bug this caused.
 
 The one awkward direction is *worker asks the GUI a question* - a destructive
 command needing confirmation. :class:`ConfirmBroker` handles it by emitting a
@@ -19,7 +26,7 @@ import sys
 import threading
 from typing import Optional
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from assistant.config import AppConfig
@@ -132,6 +139,33 @@ class HotkeyBridge(QObject):
             callback()
 
 
+class ListenerBridge(QObject):
+    """Speech events, from any thread, delivered on the GUI thread.
+
+    This exists because ``QTimer.singleShot(0, ...)`` - what this used to be
+    wired with - only works as a thread hop when the *calling* thread has an
+    active Qt event loop pumping it. ``SpeechInput`` runs its recording and
+    transcription on plain ``threading.Thread`` workers, which never do -
+    they are not ``QThread``s and nothing ever calls ``exec()`` on them. The
+    timer was created successfully every time and then simply never fired,
+    silently: no exception, no log line, nothing. A voice command that
+    matched an exact, unambiguous command ("open youtube") produced no
+    console output and no chat message at all, because ``self._handle_
+    transcript`` - and therefore ``Assistant.handle`` - was never actually
+    called.
+
+    A ``pyqtSignal`` is the correct tool for this: Qt detects that the
+    thread emitting a signal differs from the thread the connected slot's
+    receiver lives in, and automatically queues delivery onto the
+    receiver's own event loop - exactly what :class:`AssistantBridge`
+    already relies on for job results elsewhere in this file.
+    """
+
+    state_changed = pyqtSignal(bool)
+    transcript_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+
 class AssistantApp:
     """Owns the Qt application and every long-lived object in the UI."""
 
@@ -149,6 +183,7 @@ class AssistantApp:
         self.confirm_broker = ConfirmBroker()
         self.confirm_broker.attach(self.window)
         self.hotkeys = HotkeyBridge()
+        self.listener_bridge = ListenerBridge()
         self.listener = None  # built lazily on first mic use
 
         self._connect()
@@ -180,6 +215,10 @@ class AssistantApp:
         self.hotkeys.talk.connect(self._on_mic)
         self.hotkeys.talk_pressed.connect(self._on_hold_start)
         self.hotkeys.talk_released.connect(self._on_hold_stop)
+
+        self.listener_bridge.state_changed.connect(self.window.set_listening)
+        self.listener_bridge.transcript_ready.connect(self._handle_transcript)
+        self.listener_bridge.error_occurred.connect(lambda t: self.window.append(t, kind="error"))
 
         self.assistant.set_confirm(self.confirm_broker.confirm)
         self.assistant.set_notifier(self.tray.notify)
@@ -226,13 +265,9 @@ class AssistantApp:
 
         if self.listener is None:
             self.listener = SpeechInput(
-                on_state=lambda listening: QTimer.singleShot(
-                    0, lambda: self.window.set_listening(listening)
-                ),
-                on_text=self._on_transcript,
-                on_error=lambda message: QTimer.singleShot(
-                    0, lambda: self.window.append(message, kind="error")
-                ),
+                on_state=self.listener_bridge.state_changed.emit,
+                on_text=self.listener_bridge.transcript_ready.emit,
+                on_error=self.listener_bridge.error_occurred.emit,
                 wake_word=str(
                     self.assistant.store.value("core", "voice.live_wake_word", "") or ""
                 ),
@@ -259,11 +294,9 @@ class AssistantApp:
             return listener.stop_live()
         return "Live listening is " + ("on." if listener.live else "off.")
 
-    def _on_transcript(self, text: str) -> None:
-        # Arrives from the listener thread; hop to the GUI thread first.
-        QTimer.singleShot(0, lambda: self._handle_transcript(text))
-
     def _handle_transcript(self, text: str) -> None:
+        # Reached via listener_bridge.transcript_ready - already on the GUI
+        # thread by the time this runs; see ListenerBridge for why.
         self.window.set_listening(False)
         if not text.strip():
             self.window.append("I didn't catch that.", kind="notice")

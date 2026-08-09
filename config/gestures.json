@@ -1,13 +1,17 @@
 {
-  "_comment": "Finger-count gestures only - the one thing a webcam reads reliably. 'fist' and 'open_palm' are neutral: they fire nothing and re-arm the recogniser. 'stop' is five fingers held together (traffic-policeman stop); 'open_palm' is the same five spread apart.",
+  "_comment": "Finger-count gestures only - the one thing a webcam reads reliably. 'open_palm' is the ONLY neutral pose: it fires nothing and re-arms the recogniser so you can repeat a gesture. Every other count does something, including a closed fist. 'stop' is five fingers held together (traffic-policeman stop); 'open_palm' is the same five spread apart.",
   "camera_index": 0,
-  "fps_limit": 20,
+  "fps_limit": 15,
   "hold_frames": 5,
   "cooldown_seconds": 1.0,
-  "swipe_travel": 0.22,
-  "confidence": 0.6,
+  "confidence": 0.5,
   "start_with_app": false,
   "bindings": {
+    "fist": {
+      "action": "hotkey",
+      "keys": "ctrl+windows+left",
+      "label": "previous desktop"
+    },
     "one": {
       "action": "hotkey",
       "keys": "alt+tab",
@@ -31,10 +35,6 @@
     "stop": {
       "action": "stop_speaking",
       "label": "stop talking"
-    },
-    "fist": {
-      "action": "none",
-      "label": "(neutral - re-arms, fires nothing)"
     },
     "open_palm": {
       "action": "none",

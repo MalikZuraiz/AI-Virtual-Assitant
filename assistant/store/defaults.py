@@ -243,40 +243,38 @@ def _personas() -> dict:
 
 
 def _gestures() -> dict:
+    # Finger-count poses only (assistant/vision/gestures.py) - one binding per
+    # count 0-4, plus the two five-finger variants. Kept in lockstep with
+    # that module's POSES/NEUTRAL: this dict is deep-merged *underneath*
+    # whatever is hand-edited in config/gestures.json (via the "bindings"
+    # wholesale-merge key - see store.WHOLESALE_DICT_KEYS), so a stale
+    # binding left here would otherwise resurrect itself after being
+    # deleted from the JSON - that was the actual cause of gestures
+    # "colliding" for a whole round after the poses that caused it had
+    # already been removed from disk.
     return {
         "_comment": (
             "Hand gestures -> Windows actions. action: hotkey | switch_window | "
-            "command | text | none. Hold a pose for hold_frames frames, or swipe. "
-            "Raise cooldown_seconds if gestures fire twice; raise hold_frames if "
-            "they fire by accident."
+            "command | stop_speaking | text | none. Hold a pose for hold_frames "
+            "frames. 'open_palm' is the ONLY neutral pose - never bind an action "
+            "to it, it exists to re-arm the recogniser so a gesture can repeat. "
+            "Every other count, including a closed fist, does something. "
+            "Deleting a binding here unbinds it; there is no hidden fallback."
         ),
         "camera_index": 0,
-        "fps_limit": 20,
-        "hold_frames": 6,
-        "cooldown_seconds": 1.2,
-        "swipe_travel": 0.22,
-        "confidence": 0.6,
+        "fps_limit": 15,
+        "hold_frames": 5,
+        "cooldown_seconds": 1.0,
+        "confidence": 0.5,
         "start_with_app": False,
         "bindings": {
-            "swipe_left": {
-                "action": "hotkey", "keys": "ctrl+windows+left", "label": "previous desktop",
-            },
-            "swipe_right": {
-                "action": "hotkey", "keys": "ctrl+windows+right", "label": "next desktop",
-            },
-            "swipe_up": {"action": "hotkey", "keys": "windows+tab", "label": "task view"},
-            "swipe_down": {"action": "hotkey", "keys": "windows+d", "label": "show desktop"},
-            "peace": {"action": "hotkey", "keys": "ctrl+windows+d", "label": "new desktop"},
-            "fist": {"action": "hotkey", "keys": "ctrl+windows+f4", "label": "close this desktop"},
-            "three": {"action": "switch_window", "label": "switch window"},
-            "open_palm": {"action": "none", "label": "(neutral - resets the gesture)"},
-            "point": {"action": "none", "label": "(unused - keep free for pointing)"},
-            "thumbs_up": {"action": "hotkey", "keys": "volume up", "label": "volume up"},
-            "thumbs_down": {"action": "hotkey", "keys": "volume down", "label": "volume down"},
-            "ok": {"action": "hotkey", "keys": "play/pause media", "label": "play / pause"},
-            "rock": {"action": "hotkey", "keys": "windows+shift+s", "label": "screenshot"},
-            "call": {"action": "command", "command": "what's my day", "label": "daily briefing"},
+            "fist": {"action": "hotkey", "keys": "ctrl+windows+left", "label": "previous desktop"},
+            "one": {"action": "hotkey", "keys": "alt+tab", "label": "switch window"},
+            "two": {"action": "hotkey", "keys": "ctrl+windows+d", "label": "new desktop"},
+            "three": {"action": "hotkey", "keys": "ctrl+windows+right", "label": "next desktop"},
             "four": {"action": "hotkey", "keys": "windows+m", "label": "minimise everything"},
+            "stop": {"action": "stop_speaking", "label": "stop talking"},
+            "open_palm": {"action": "none", "label": "(neutral - re-arms, fires nothing)"},
         },
     }
 

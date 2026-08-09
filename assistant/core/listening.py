@@ -34,9 +34,26 @@ CHUNK_MS = 100
 #: room at the start of every recording; this is only the minimum.
 SILENCE_RMS = 0.008
 #: How far above the measured noise floor counts as speech.
-NOISE_MARGIN = 3.0
-#: How long to listen to the room before deciding what silence sounds like.
-NOISE_SAMPLE_MS = 300
+NOISE_MARGIN = 2.5
+#: However bad the calibration, the threshold can never climb past this -
+#: a bad reading must not be able to make the mic permanently deaf for the
+#: rest of the recording. Comfortably above real ambient noise, comfortably
+#: below real speech.
+MAX_SILENCE_THRESHOLD = 0.05
+#: Discarded before calibration starts. The button or hotkey that triggers
+#: recording is often a literal click next to the microphone, and that
+#: transient landing inside the calibration window was the actual bug: it
+#: measured 0.168 as "quiet" against a real ambient ceiling of 0.09, so
+#: normal speech afterward could never clear the bar and every recording
+#: silently produced nothing.
+CALIBRATION_SETTLE_MS = 80
+#: Finer than the main recording chunk, so calibration gets more samples to
+#: work with in the same wall-clock time - one bad instant can't dominate a
+#: percentile the way it dominates a median of three.
+CALIBRATION_CHUNK_MS = 40
+#: How long to listen to the room, after the settle period, before deciding
+#: what silence sounds like.
+NOISE_SAMPLE_MS = 360
 SILENCE_TO_STOP_MS = 1000
 MAX_RECORD_S = 15
 MIN_SPEECH_MS = 350
@@ -232,7 +249,13 @@ class SpeechInput:
         if audio is None or len(audio) < SAMPLE_RATE * (MIN_SPEECH_MS / 1000):
             self.on_text("")
             return
-        self.on_text(self._clean(self._transcribe(audio)))
+        raw = self._transcribe(audio)
+        cleaned = self._clean(raw)
+        if cleaned != raw.strip():
+            logger.info("Transcript %r dropped as noise/hallucination.", raw)
+        else:
+            logger.info("Transcript: %r", cleaned)
+        self.on_text(cleaned)
 
     # -- audio ------------------------------------------------------------
     def device_rate(self) -> int:
@@ -281,19 +304,34 @@ class SpeechInput:
 
         A fixed threshold cannot work across a quiet room and a noisy one, or
         across two microphones with different gain. Sampling the actual floor
-        and sitting a few times above it adapts to both.
+        and sitting a margin above it adapts to both - but the sampling has to
+        be robust to one bad instant, because the very button press that
+        starts recording is often a click right next to the microphone.
+
+        Discards a short settle period first, takes many small samples rather
+        than a few large ones, and uses a low percentile rather than the
+        median - the quietest moments are the truest picture of silence, and
+        a single loud instant should not raise the bar for real speech. A
+        hard ceiling is the last line of defence: whatever this measures, it
+        can never lock genuine speech out for the rest of the recording.
         """
-        frames = int(rate * CHUNK_MS / 1000)
+        settle_frames = int(rate * CALIBRATION_SETTLE_MS / 1000)
+        if settle_frames:
+            stream.read(settle_frames)  # discard - likely a button/key click
+
+        frames = int(rate * CALIBRATION_CHUNK_MS / 1000)
         levels: list[float] = []
-        for _ in range(int(NOISE_SAMPLE_MS / CHUNK_MS)):
+        for _ in range(max(1, int(NOISE_SAMPLE_MS / CALIBRATION_CHUNK_MS))):
             chunk, _overflow = stream.read(frames)
             mono = chunk[:, 0]
             if mono.size:
                 levels.append(float(np.sqrt(np.mean(np.square(mono)))))
         if not levels:
             return SILENCE_RMS
-        floor = float(np.median(levels))
-        return max(SILENCE_RMS, floor * NOISE_MARGIN)
+
+        floor = float(np.percentile(levels, 20))
+        threshold = max(SILENCE_RMS, floor * NOISE_MARGIN)
+        return min(threshold, MAX_SILENCE_THRESHOLD)
 
     def _record_until_silence(self, wait_for_speech: bool = False):
         """Record one utterance. Returns None if nothing was said."""
@@ -327,7 +365,15 @@ class SpeechInput:
                 if spoken and silent_ms >= SILENCE_TO_STOP_MS:
                     break
         if not collected or not spoken:
+            logger.info(
+                "Heard nothing above the calibrated threshold (%.4f) in %dms.",
+                threshold, MAX_RECORD_S * 1000,
+            )
             return None
+        logger.info(
+            "Captured %.1fs of speech (threshold %.4f).",
+            len(collected) * CHUNK_MS / 1000, threshold,
+        )
         return resample(np.concatenate(collected), rate, SAMPLE_RATE)
 
     def _record_while_held(self):

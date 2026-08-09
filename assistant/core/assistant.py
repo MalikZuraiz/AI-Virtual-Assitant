@@ -92,6 +92,11 @@ class Assistant:
         self.ctx.on_stream = lambda text: self._emit(
             AssistantEvent("stream", text, speak=False)
         )
+        # For background threads with no bound job (the gesture camera loop)
+        # that still need to land in chat and be spoken - see Context.announce.
+        self.ctx.on_announce = lambda text, speak=True: self._emit(
+            AssistantEvent("reply", text, speak=speak)
+        )
 
         self.store.on_refresh(self._on_config_refresh)
 
@@ -186,6 +191,12 @@ class Assistant:
 
         match = self.router.match(text)
         if match is None:
+            # A matched command logs "Dispatching X -> Y" from within
+            # CommandRouter.run - a miss logs nothing anywhere by default,
+            # which is exactly what made a garbled voice transcript look
+            # like it vanished into nothing instead of like what it was: a
+            # phrase that failed to match anything.
+            logger.info("No command matched: %r", text)
             self._fallback(text)
             return
 
@@ -205,27 +216,21 @@ class Assistant:
         self.jobs.submit(title, self._make_job(command, text), priority=command.priority)
 
     def _fallback(self, text: str) -> None:
-        """Nothing matched. Try open chat if it's configured, else say so.
+        """Nothing matched. Say so - never a silent detour into open chat.
 
-        Deliberately last and deliberately optional: the router stays the
-        brain, and with no model configured the assistant gives the same
-        honest "I don't have a command for that" it always did.
+        This used to pipe any unmatched text straight to the LLM whenever one
+        was configured and reachable, with no prefix required. That directly
+        contradicted the documented chat design (assistant/commands/chat.py:
+        "opt-in by prefix... anything that matched no command and has no
+        prefix still gets the plain 'I don't have a command for that'") and
+        it is the reason a garbled voice transcript like "generate any
+        penalties before." - a failed attempt at a report command - silently
+        turned into a 15-20 second round trip with whatever chat persona
+        happened to be active, instead of a fast, clear "I didn't catch a
+        command there." A real ``nova <message>`` already matches the ``chat``
+        command directly in the router and never reaches this method at all,
+        so there is nothing to route here - only to report.
         """
-        if self.llm is not None and self.llm.available():
-            self._emit(AssistantEvent("pending", "Thinking...", speak=False))
-
-            def _run(handle) -> str:
-                self.ctx.bind_job(handle)
-                try:
-                    self._emit(
-                        AssistantEvent("reply", self.llm.chat(text), speak=True, job_id=handle.id)
-                    )
-                finally:
-                    self.ctx.bind_job(None)
-                return ""
-
-            self.jobs.submit("open chat", _run, priority=6)
-            return
         self._emit(AssistantEvent("reply", self.router.unknown_text(text), speak=True))
 
     def _make_job(self, command, text: str):

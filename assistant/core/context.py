@@ -80,13 +80,15 @@ class Context:
     #: Lets a gesture bound to ``action: command`` route text back through
     #: the assistant, so gestures can trigger anything commands can.
     run_command: Callable[[str], None] | None = None
-    gestures: object | None = None
-
-    _local: threading.local = field(default_factory=threading.local, repr=False)
     #: Built on first use by the gesture pack - importing mediapipe is slow
     #: and memory-hungry, so an assistant that is never asked for gestures
     #: never pays for it.
     gestures: object | None = None
+    #: Set by the Assistant: pushes a line into chat (and optionally speaks
+    #: it) from *any* thread - see :meth:`announce`.
+    on_announce: Optional[Callable[[str, bool], None]] = None
+
+    _local: threading.local = field(default_factory=threading.local, repr=False)
 
     # -- per-thread job plumbing -----------------------------------------
     def bind_job(self, handle: JobHandle | None) -> None:
@@ -114,6 +116,23 @@ class Context:
         """
         if self.on_stream is not None:
             self.on_stream(text)
+
+    def announce(self, text: str, speak: bool = True) -> None:
+        """Push a line into chat (and speak it) from any thread, job or not.
+
+        ``progress()`` only works from a worker thread the job runner bound
+        with :meth:`bind_job` - it silently no-ops anywhere else. The webcam
+        gesture loop runs on its own plain ``threading.Thread`` that is never
+        bound to a job, so a gesture handler calling ``ctx.progress(...)``
+        after it fires an action was going nowhere: not the chat log, not
+        speech, nothing - the text hit a debug-level log line and stopped.
+        This is the fix - a channel that works regardless of which thread or
+        binding state called it, for exactly that kind of background event.
+        """
+        if self.on_announce is not None:
+            self.on_announce(text, speak)
+        else:
+            logger.info("announce (no sink bound): %s", text)
 
     @property
     def cancelled(self) -> bool:

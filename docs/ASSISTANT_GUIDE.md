@@ -56,7 +56,7 @@ assistant/
   ui/qt/                 app, hud, tray, bridge, theme
   ui/app.py              fallback CustomTkinter window (--legacy-ui)
 config/                  the JSON files you edit
-tests/                   194 tests
+tests/                   296 tests
 ```
 
 ### Threading — why the GUI cannot freeze
@@ -232,6 +232,151 @@ way commands do.
 
 ---
 
+## 3a. Next round: `start gestures` crash + speech recognition root cause
+
+The finger-count gesture rewrite (§3, "Gestures: three separate bugs") landed
+its logic correctly but shipped two integration bugs, and the STT sample-rate
+fix from the same round turned out not to be the whole story.
+
+**`start gestures` raised `TypeError` immediately.** `assistant/commands/
+vision.py` still called `GestureController(min_travel=...)` — a constructor
+argument that belonged to the swipe-based recogniser the rewrite had already
+removed. Fixed by dropping the stale argument; caught going forward by
+`tests/test_gesture_wiring.py::test_vision_command_pack_only_passes_
+arguments_the_controller_accepts`, which inspects the call site against the
+real signature instead of requiring a webcam to catch it.
+
+**Deleted gesture bindings kept coming back.** `assistant/store/defaults.py`'s
+seed content for `gestures.json` still listed every pre-rewrite binding
+(swipe_left, thumbs_up, rock, ok, call, …). `ConfigStore` merges that seed
+*underneath* the real file so new settings appear in old files automatically
+— but the merge was recursive for every nested dict, including `bindings`
+itself. Deleting a binding from the JSON never stuck: the seed's copy merged
+back in on the very next load. This is why gestures kept "colliding" even
+after a rewrite that had already deleted the offending bindings from disk.
+
+Fixed at the right layer: `deep_merge` gained a `wholesale` parameter, and
+`ConfigStore._read` passes `WHOLESALE_DICT_KEYS` (`gestures.bindings`,
+`personas.modes`) so those two keys are replaced wholesale from the user's
+file when present, the same treatment lists already got and for the same
+reason — a user who deletes an entry means it.
+`tests/test_wholesale_merge.py` and `test_gesture_wiring.py::test_a_deleted_
+binding_does_not_come_back_from_defaults` pin this so it can't regress
+silently again.
+
+**Speech recognition's actual remaining bug: noise-floor calibration, not
+sample rate.** The 44.1kHz-vs-16kHz capture fix (§3) was real and necessary,
+but calibrating the silence threshold from **3 samples taken the instant
+recording opens** was the bug that actually mattered. That window almost
+always contains the physical click of pressing the mic button or hotkey,
+right next to the microphone. Measured live on this machine: that click
+alone produced a threshold of **0.168**, while genuine ambient room noise
+over the following three seconds peaked at only **0.09** — meaning normal
+speech could never clear the bar, and every recording silently produced
+nothing. No exception, no log line a user would see; `_record_until_silence`
+just ran its full 15-second timeout and returned `None`.
+
+Fixed with three changes to `SpeechInput._noise_floor`:
+- an 80ms settle period is discarded before calibration starts, so a
+  button-press transient falls outside the sampled window entirely
+- calibration takes far more, smaller samples (40ms chunks over 360ms, ~9
+  samples instead of 3) and uses the **20th percentile** instead of the
+  median, so one bad instant among many can't dominate
+- a hard ceiling (`MAX_SILENCE_THRESHOLD = 0.05`) means a bad calibration can
+  never lock real speech out for the rest of that recording, no matter what
+  it measured
+
+Also added: `logger.info` on every recording's outcome (heard nothing above
+threshold X / captured N seconds / transcript "…") and on anything the noise
+filter drops, so a future "it's not working" is diagnosable from the console
+log alone rather than requiring someone to have been watching the chat
+window at the time. `tests/test_noise_floor.py` reproduces the click-at-
+start scenario against a fake audio stream and asserts the calibrated
+threshold stays low enough for real speech to clear it.
+
+---
+
+## 3b. Next round again: voice commands did nothing, gestures went nowhere
+
+Three more bugs, found by chasing the previous round's fixes through to
+where they actually connect to the UI.
+
+**Voice commands - including exact matches like "open youtube" - produced no
+chat message and no console log line at all.** Not a matching bug: the Qt UI
+hopped from the microphone's background thread to the GUI thread with
+`QTimer.singleShot(0, callback)`. That primitive only fires if the *calling*
+thread has an active Qt event loop of its own pumping it; `SpeechInput`
+records and transcribes on a plain `threading.Thread` - never a `QThread`,
+`exec()` never called on it - so the timer was created successfully every
+time and then simply never fired. No exception, no log, the callback (which
+calls `Assistant.handle()`) just never ran. Proven directly: emitting from
+the same kind of thread, a real `pyqtSignal` delivers every time and
+`QTimer.singleShot` delivers nothing (`tests/test_listener_bridge.py`
+contains both halves of that comparison, run against a real
+`QCoreApplication` event loop, not mocked). Fixed with `ListenerBridge`, a
+proper signal-based bridge mirroring `AssistantBridge`'s existing pattern for
+job results and `HotkeyBridge`'s for global hotkeys - the mic path was the
+one place in the app that had never gotten that treatment.
+
+**Gesture actions fired the hotkey but never told you.** `ctx.progress()`
+only works on a thread the job runner explicitly bound with `bind_job()`;
+the gesture camera loop is a bare `threading.Thread` that is never job-bound,
+so every notification hit a debug-level log line and stopped. Fixed with
+`Context.announce(text, speak=True)`, a channel that works from any thread
+regardless of binding state - wired to `AssistantEvent("reply", ...)` the
+same way a normal command reply is, so a fired gesture now writes a chat line
+*and* speaks it: `Gesture (2 fingers): new desktop`.
+
+**Unmatched text was silently handed to the chat model.** `Assistant.
+_fallback` piped any unmatched text to the LLM whenever one was configured
+and reachable, no `nova` prefix required - directly contradicting
+`assistant/commands/chat.py`'s own documented "opt-in by prefix" design. A
+garbled voice transcript that failed to match a real command (`"generate any
+penalties before."`) silently became a 15-20 second conversation with
+whatever persona happened to be active instead of a fast "I don't have a
+command for that yet." Fixed: `_fallback` always returns the plain message
+now. `nova <message>` still reaches chat exactly as before, since it matches
+the `chat` command directly in the router and never reaches `_fallback` at
+all. Every dispatch outcome is now logged at INFO level
+(`Dispatching '...' -> '<command>'` or `No command matched: '...'`), so this
+class of "why did nothing happen" is diagnosable from the terminal without
+needing to have been watching the chat window.
+
+Also added: `fist` is no longer a second neutral pose alongside open palm -
+it is bound to **previous desktop**, pairing with the existing three-fingers
+→ next desktop. Open palm is now the *only* neutral/reset pose.
+
+---
+
+## 3c. Speech was reading things nobody would say out loud
+
+Two complaints, same underlying mistake in opposite directions: the previous
+round's "speak everything, not just line one" fix was correct as far as it
+went, but it made no distinction between a short answer (which *should* be
+read in full) and a numbered listing (which should not be read as a list at
+all). `"Opened https://www.youtube.com"` was read with the full URL, and a
+13-file picker was read filename by filename, size and date included -
+technically "everything", but not what a person would actually say.
+
+`TextToSpeech._for_speech` (the one chokepoint every spoken reply passes
+through) now does two things before the existing length-cap logic:
+
+- **URL shortening.** `https://www.youtube.com` → `youtube.com` in speech
+  only; the chat text is untouched, so the full address is still there to
+  read or click.
+- **List detection.** Three or more lines matching a bullet/number pattern
+  (`- `, `* `, `1.`, `2)`, …) means this is a picker or listing, not a short
+  reply. Only the first non-list line - the question or header - is spoken,
+  followed by "Check the chat for the full list." Two list-shaped lines still
+  read in full; the threshold exists so an ordinary two-item answer that
+  happens to use dashes isn't over-triggered into a summary.
+
+Both changes are content-shape heuristics rather than per-command flags, so
+they apply uniformly to every existing "list X" command and any future one,
+with no risk of a new command forgetting to opt in.
+
+---
+
 ## 4. Config reference
 
 Files live in [`config/`](../config/) — hand-editable, one per domain. Runtime
@@ -278,7 +423,7 @@ config-driven command and says what changed.
 ## 5. Testing
 
 ```powershell
-.\.venv\Scripts\python -m pytest tests/ -q     # 194 passed
+.\.venv\Scripts\python -m pytest tests/ -q     # 296 passed
 ```
 
 Covers: config store (refresh after hand-edit, broken-JSON resilience, atomic

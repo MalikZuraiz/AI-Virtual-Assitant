@@ -14,15 +14,17 @@ version was cleverer and less reliable.
   the time is worse than no gesture, because you stop trusting the feature.
 
 **What is left** is the one signal a webcam reads reliably: how many fingers
-are sticking up. Zero through five, plus one extra bit - whether the fingers
-are pressed together or spread - which separates a traffic-policeman "stop"
-from a relaxed open palm.
+are sticking up. Zero through four are each their own pose (fist through four
+fingers); five is split into two by one extra bit - whether the fingers are
+pressed together or spread - which separates a traffic-policeman "stop" from
+a relaxed open palm. Every count does something except open palm, which is
+kept deliberately free as the one unambiguous "reset" shape (see ``NEUTRAL``).
 
 **The bug that made it feel dead.** After a gesture fired, the recogniser
 disarmed and only an *open palm* re-armed it. So showing two fingers then
 three did nothing at all: the second pose was blocked until you happened to
 flash a palm. Re-arming is now per-pose - a different shape always fires, and
-only repeating the *same* shape needs a neutral in between.
+only repeating the *same* shape needs a neutral (open palm) in between.
 
 Mappings live in ``config/gestures.json``.
 """
@@ -54,6 +56,11 @@ from assistant.vision.handtracking import (
 logger = logging.getLogger("assistant.gestures")
 
 StatusCallback = Callable[[str], None]
+#: (pose_name, what_happened) - called only when a gesture actually fires,
+#: kept separate from ``StatusCallback`` so the two can be treated
+#: differently (a fired gesture is worth interrupting speech for; "camera
+#: ready" is not).
+FiredCallback = Callable[[str, str], None]
 FrameCallback = Callable[[object], None]
 ActionCallback = Callable[[str, dict], str]
 
@@ -61,10 +68,11 @@ ActionCallback = Callable[[str, dict], str]
 #: five-finger variants.
 POSES = ("fist", "one", "two", "three", "four", "stop", "open_palm")
 
-#: Poses that fire nothing and re-arm the recogniser. A fist is here because
-#: a relaxed hand entering or leaving the frame passes through one, and an
-#: open palm because it is the natural "reset" shape.
-NEUTRAL = {"none", "fist", "open_palm"}
+#: Poses that fire nothing and re-arm the recogniser. Open palm only,
+#: deliberately: it is the one shape that never doubles as an action, so it
+#: is the unambiguous "I mean to reset, not to gesture" signal - show it
+#: between gestures whenever you want to repeat the one you just did.
+NEUTRAL = {"none", "open_palm"}
 
 #: A thumb folded across the palm ends up near the pinky knuckle; an extended
 #: one is far outside it. Measured against palm width, this separates cleanly
@@ -204,6 +212,7 @@ class GestureController:
         confidence: float = 0.5,
         model_path: Optional[Path] = None,
         on_status: Optional[StatusCallback] = None,
+        on_fired: Optional[FiredCallback] = None,
         on_frame: Optional[FrameCallback] = None,
     ) -> None:
         self.on_action = on_action
@@ -218,6 +227,7 @@ class GestureController:
         self.confidence = confidence
         self.model_path = model_path
         self.on_status = on_status
+        self.on_fired = on_fired
         self.on_frame = on_frame
 
         self.recogniser = GestureRecogniser(hold_frames, cooldown)
@@ -354,8 +364,12 @@ class GestureController:
         except Exception as exc:  # noqa: BLE001
             logger.exception("Gesture action failed")
             message = f"{name} failed: {exc}"
-        if self.on_status and message:
-            self.on_status(message)
+        # A real, bound gesture firing is worth telling the user about in
+        # chat and out loud - that is what on_fired is for. on_status stays
+        # reserved for lifecycle bookkeeping (camera ready/stopped), which
+        # would be an annoying interruption if spoken every single fire.
+        if self.on_fired and message:
+            self.on_fired(name, message)
 
     def _draw(self, cv2, frame) -> None:
         cv2.putText(

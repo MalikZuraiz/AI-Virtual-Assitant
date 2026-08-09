@@ -34,9 +34,20 @@ DEFAULT_VOICE = "en-US-AriaNeural"
 
 #: Safety valve on spoken length. Replies are read in full up to this; beyond
 #: it, speech stops at a sentence boundary and says the rest is in the chat.
-#: Generous on purpose - a 200-line `help` listing is the only realistic thing
-#: that hits it.
 MAX_SPOKEN_CHARS = 1200
+
+#: A line that looks like "- foo", "* foo", "1. foo" or "3) foo" - a list
+#: item, not a sentence. Matched against the *raw* line, before the
+#: bullet-stripping pass that makes list items readable when they ARE spoken.
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*•]|\d+[.):])\s+")
+
+#: A reply with at least this many list-shaped lines is summarised instead
+#: of read item by item - three is enough to tell "a couple of related facts"
+#: (fine to read) apart from "a picker/listing" (not fine - see _for_speech).
+LIST_ITEM_THRESHOLD = 3
+
+#: Matches a URL for shortening in speech - see TextToSpeech._shorten_urls.
+_URL_RE = re.compile(r"https?://(?:www\.)?([^\s/]+)(?:/\S*)?")
 
 #: Voices worth offering in settings - all free Edge neural voices.
 SUGGESTED_VOICES = (
@@ -171,30 +182,47 @@ class TextToSpeech:
         return "I wasn't saying anything."
 
     @staticmethod
-    def _for_speech(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
-        """Prepare a reply to be read aloud in full.
+    def _shorten_urls(text: str) -> str:
+        """"Opened https://www.youtube.com" -> "Opened youtube.com" to say.
 
-        This used to speak only the first line and then say "plus 6 more
-        lines in the chat", which meant most answers were never actually
-        heard. Everything is read now; the only edits are ones that make
-        speech *sound* right rather than shorter:
-
-        * list bullets become pauses instead of "dash dash dash"
-        * paths and file names are left alone (they are often the answer)
-        * a hard character cap stops a runaway wall of text from occupying
-          the speaker for five minutes - it is a safety valve, not a summary
+        A URL is exactly the kind of thing that is useful to *see* (you might
+        click it) and tedious to *hear* spelled out. Only touches what gets
+        spoken - the chat text keeps the full address.
         """
-        lines = [line.rstrip() for line in text.splitlines()]
+        return _URL_RE.sub(lambda m: m.group(1), text)
+
+    @classmethod
+    def _for_speech(cls, text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
+        """Prepare a reply to be read aloud - in full, unless it's a list.
+
+        Two failure modes, fixed in opposite directions of the same mistake:
+        speaking *nothing* of a reply (the old "plus 6 more lines" summary)
+        and speaking *everything* of one (reading a 13-file picker's every
+        filename, size and date aloud, one by one). Both are wrong for the
+        same reason - the spoken reply should match how a person would
+        actually say it out loud, not mechanically transcribe the chat text.
+
+        A short confirmation ("Opened Chrome") is read in full - that IS how
+        you'd say it. A numbered list is not read as a list - nobody reads
+        "one: sheet three, two: sheet two, three: sheet one..." aloud; they
+        say "I've listed a few files, take a look" and let you glance at the
+        screen. So a reply with several list-shaped lines is reduced to its
+        first non-list line (the question/header) instead of enumerated.
+        """
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        item_lines = [line for line in lines if _LIST_ITEM_RE.match(line)]
+        if len(item_lines) >= LIST_ITEM_THRESHOLD:
+            header = next((line for line in lines if not _LIST_ITEM_RE.match(line)), "")
+            header = cls._shorten_urls(header).rstrip(" .!?") or "Here's a list"
+            return f"{header}. Check the chat for the full list."
+
         cleaned: list[str] = []
         for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
             # Leading list markers read badly out loud.
-            stripped = re.sub(r"^\s*[-*•]\s+", "", stripped)
+            stripped = re.sub(r"^\s*[-*•]\s+", "", line)
             stripped = re.sub(r"^\s*(\d+)\.\s+", r"\1: ", stripped)
             cleaned.append(stripped)
-        spoken = ". ".join(cleaned)
+        spoken = cls._shorten_urls(". ".join(cleaned))
         spoken = re.sub(r"\s+", " ", spoken).strip()
         if len(spoken) <= limit:
             return spoken

@@ -106,9 +106,10 @@ def test_odd_finger_combinations_are_rejected_rather_than_guessed():
     assert classify(_hand(index=True, middle=True, pinky=True)) == "none"
 
 
-def test_neutral_poses_are_the_ones_that_fire_nothing():
-    assert "fist" in NEUTRAL
-    assert "open_palm" in NEUTRAL
+def test_open_palm_is_the_only_neutral_pose():
+    """Fist carries an action (previous desktop) - only open palm resets."""
+    assert NEUTRAL == {"none", "open_palm"}
+    assert "fist" not in NEUTRAL
     assert "stop" not in NEUTRAL
 
 
@@ -201,12 +202,17 @@ def test_losing_the_hand_resets_everything():
     assert recogniser.update(two, now=0.25) == "two"
 
 
-def test_a_neutral_pose_itself_never_fires():
+def test_open_palm_itself_never_fires():
     recogniser = GestureRecogniser(hold_frames=2, cooldown=0.0)
-    for hand in (
-        _hand(),  # fist
-        _hand(index=True, middle=True, ring=True, pinky=True,
-              thumb_pos=THUMB_OUT, spread=0.14),  # open palm
-    ):
-        events = [recogniser.update(hand, now=i * 0.05) for i in range(10)]
-        assert all(event is None for event in events)
+    palm = _hand(index=True, middle=True, ring=True, pinky=True,
+                 thumb_pos=THUMB_OUT, spread=0.14)
+    events = [recogniser.update(palm, now=i * 0.05) for i in range(10)]
+    assert all(event is None for event in events)
+
+
+def test_a_fist_fires_previous_desktop_not_neutral():
+    """The gesture this round added - a fist is now an action, not a reset."""
+    recogniser = GestureRecogniser(hold_frames=3, cooldown=0.0)
+    fist = _hand()
+    fires = [f for i in range(6) if (f := recogniser.update(fist, now=i * 0.05))]
+    assert fires == ["fist"]
