@@ -537,6 +537,45 @@ must never do as a side effect. The read-only half (`_foreground_is_real_window`
 was additionally checked against the real desktop live, since that part has
 no side effects to worry about.
 
+## 3g. Swipe accuracy: what the user's own hand shape revealed
+
+Reported after 3e/3f: swipes still sometimes went unrecognised, and
+sometimes "worked fine, then got stuck for a bit, then started working
+again." The description of *how* the gesture is actually performed pointed
+at the real cause: index and middle fingers held together, thumb held open
+too - the same shape as the L sign, just with two fingers instead of one.
+
+**The open thumb was making "three" fire by accident.** `classify()`'s ring
+finger check for a 2-finger vs 3-finger count doesn't look at the thumb at
+all, but on a hand shape this open, the ring finger can bleed just past the
+extended threshold without the fingers actually spreading apart - misreading
+a genuine two-finger swipe as a held three-finger pose. That "three" then
+fires (volume up) and engages the shared fire-once/swipe cooldown for a full
+second - which is exactly the "works, then gets stuck for about a second,
+then works again" pattern described. Fixed by having a 3-finger reading with
+an open thumb route to the swipe carrier instead of "three": a deliberate
+volume-up hold is rarely also performed with the thumb splayed out, so this
+costs essentially nothing there while removing the false fire that was
+stealing the cooldown from real swipes.
+
+**A completed swipe during that cooldown was being silently dropped.**
+Even independent of the above - two swipes performed in quick succession, or
+a swipe right after any fire-once pose - could complete a valid motion while
+the shared cooldown was still running, and `_process()` simply discarded it,
+forcing the whole physical motion to be repeated. It now holds it as
+`_pending_swipe` and fires it on the very next frame once the cooldown
+clears, instead of asking for the gesture again.
+
+**`SWIPE_MISS_TOLERANCE` raised from 2 to 3** frames, giving a bit more room
+for tracking noise on a more unusual, wide-open hand shape before the motion
+history is thrown away.
+
+`tests/test_gestures.py` pins the new three-vs-two disambiguation (an open
+thumb reads as the swipe carrier; a tucked one still fires "three" as
+before), and `tests/test_gesture_controller_process.py` gained a case
+proving a swipe completed mid-cooldown fires on its own the moment the
+cooldown clears rather than needing to be redone.
+
 ---
 
 ## 4. Config reference

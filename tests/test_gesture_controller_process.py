@@ -117,6 +117,36 @@ def test_swipe_fires_through_dispatch_while_showing_two_fingers():
     assert fired == [("swipe_right", "next desktop")]
 
 
+def test_a_swipe_completed_during_cooldown_fires_the_moment_it_clears():
+    """A fire-once pose firing moments before a swipe finishes must not
+    silently swallow that swipe - real usage swipes back to back, or right
+    after some other gesture, and losing a correctly-read swipe to the
+    shared cooldown (forcing the whole motion to be repeated) is exactly
+    the "works, then gets stuck for a bit" pattern this fixes."""
+    fired = []
+    controller = _controller(on_fired=lambda name, msg: fired.append((name, msg)))
+    t = 0.0
+    for _ in range(4):
+        controller._process(THREE, "three", now=t)
+        t += 0.05
+    assert fired == [("three", "volume up")]
+
+    # A swipe completes while still well inside the cooldown "three" started.
+    for i in range(8):
+        moved = _hand(index=True, middle=True, offset=(i * 0.05, 0.0))
+        controller._process(moved, "two", now=t)
+        t += 0.05
+    assert fired == [("three", "volume up")]  # not dispatched yet
+    assert controller._pending_swipe == "swipe_right"
+
+    # The instant the cooldown clears, the pending swipe fires on its own -
+    # no need to repeat the motion.
+    after_cooldown = controller.recogniser._last_fire_time + controller.recogniser.cooldown + 0.01
+    controller._process(None, "no hand", now=after_cooldown)
+    assert fired == [("three", "volume up"), ("swipe_right", "next desktop")]
+    assert controller._pending_swipe is None
+
+
 def test_a_swipe_never_also_fires_a_static_pose():
     """Two fingers, moving, must not ALSO look like a held 'two' pose to
     the fire-once recogniser - there is no static action bound to 'two' at

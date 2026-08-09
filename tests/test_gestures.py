@@ -69,6 +69,24 @@ def test_pinky_alone_is_its_own_pose():
     assert classify(_hand(pinky=True)) == "pinky"
 
 
+def test_three_fingers_with_an_open_thumb_reads_as_the_swipe_pose():
+    """Real usage: the swipe pose is often performed with the thumb held
+    open too (same shape as the L sign, just two fingers instead of one),
+    and on an open hand the ring finger can bleed just past the extended
+    threshold without genuinely spreading apart. A stray "three" there would
+    steal the shared cooldown from an in-progress swipe, so an open thumb
+    routes a 3-finger reading back to the swipe carrier instead."""
+    bled_ring = _hand(index=True, middle=True, ring=True, thumb_pos=THUMB_OUT)
+    assert classify(bled_ring) == "two"
+
+
+def test_three_fingers_with_a_tucked_thumb_is_still_three():
+    """The disambiguation above must not cost the deliberate volume-up
+    pose, which is normally held with the thumb tucked in as usual."""
+    deliberate = _hand(index=True, middle=True, ring=True)
+    assert classify(deliberate) == "three"
+
+
 def test_four_fingers_with_thumb_out_is_five():
     hand = _hand(index=True, middle=True, ring=True, pinky=True, thumb_pos=THUMB_OUT)
     assert classify(hand) == "five"

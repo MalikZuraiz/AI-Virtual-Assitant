@@ -88,7 +88,7 @@ SWIPES = ("swipe_left", "swipe_right", "swipe_up", "swipe_down")
 #: motion blur or a one-frame tracking dropout during the wrist swing itself
 #: - without wiping the swipe motion history. A real, deliberate switch to a
 #: different pose lasts longer than this and still resets normally.
-SWIPE_MISS_TOLERANCE = 2
+SWIPE_MISS_TOLERANCE = 3
 
 #: Poses that fire nothing and re-arm the recogniser. Five fingers only,
 #: deliberately: it is the one shape that never doubles as an action, so it
@@ -146,7 +146,20 @@ def classify(shape: HandShape) -> str:
     if count == 2:
         return "two" if index and middle else "none"
     if count == 3:
-        return "three" if not pinky else "none"
+        if pinky:
+            return "none"
+        # The swipe pose is often performed with the thumb held open too
+        # (the same shape as the L sign, just with two fingers instead of
+        # one) - and on an open hand like that, the ring finger can bleed
+        # just past the extended threshold without the fingers actually
+        # spreading apart, misreading a real two-finger swipe as a
+        # three-fingers-held pose. A deliberate volume-up hold rarely also
+        # splays the thumb out; when it does, it is far more likely to be
+        # this bleed-through than someone actually meaning "three" - so an
+        # open thumb here routes to the swipe carrier instead. Otherwise a
+        # single stray "three" mid-swipe would eat the shared cooldown and
+        # block the swipe that was actually in progress.
+        return "two" if thumb_is_out(shape) else "three"
     if count == 4:
         # Thumb decides the last split: tucked is "four", extended is the
         # open "five" - no spread check any more, since the pose it used to
@@ -365,6 +378,11 @@ class GestureController:
         # Consecutive off-pose frames tolerated mid-swipe before the motion
         # history is thrown away - see _process() for why this exists.
         self._swipe_miss_streak = 0
+        # A swipe direction that finished being detected while the shared
+        # cooldown (with fire-once poses) was still active - held here so it
+        # fires the instant the cooldown clears, instead of being dropped
+        # and forcing the whole motion to be repeated. See _process().
+        self._pending_swipe: Optional[str] = None
         self.last_error = ""
         self.last_gesture = ""
         self.last_pose = ""
@@ -387,6 +405,7 @@ class GestureController:
         self.last_error = ""
         self.swipes.reset()
         self._swipe_miss_streak = 0
+        self._pending_swipe = None
         self.mute_tracker = HoldTracker()
         self._thread = threading.Thread(target=self._run, name="gestures", daemon=True)
         self._thread.start()
@@ -507,7 +526,18 @@ class GestureController:
         if edge is not None and self.on_mute:
             self.on_mute(edge)
 
-        # 2. The swipe carrier - motion only matters while this pose is
+        # 2. A swipe that finished while the shared cooldown was still
+        #    running (typically a fire-once pose firing moments earlier)
+        #    fires now, the instant that cooldown clears - rather than
+        #    having been silently dropped, forcing the whole swipe to be
+        #    repeated from scratch even though it was already read
+        #    correctly.
+        if self._pending_swipe and not self.recogniser.is_cooling_down(now):
+            direction, self._pending_swipe = self._pending_swipe, None
+            self.recogniser.mark_fired(direction, now)
+            self._dispatch(direction)
+
+        # 3. The swipe carrier - motion only matters while this pose is
         #    showing. A single off-pose frame is tolerated (see
         #    SWIPE_MISS_TOLERANCE) so a one-frame tracking dropout during
         #    the swing itself - normal during fast hand motion - doesn't
@@ -517,15 +547,18 @@ class GestureController:
         if pose == SWIPE_POSE:
             self._swipe_miss_streak = 0
             direction = self.swipes.update(shape.palm, now)
-            if direction and not self.recogniser.is_cooling_down(now):
-                self.recogniser.mark_fired(direction, now)
-                self._dispatch(direction)
+            if direction:
+                if self.recogniser.is_cooling_down(now):
+                    self._pending_swipe = direction
+                else:
+                    self.recogniser.mark_fired(direction, now)
+                    self._dispatch(direction)
         else:
             self._swipe_miss_streak += 1
             if self._swipe_miss_streak > SWIPE_MISS_TOLERANCE:
                 self.swipes.reset()
 
-        # 3. Everything else goes through the normal fire-once path. The
+        # 4. Everything else goes through the normal fire-once path. The
         #    hold and swipe poses are never fed to it - passing None is
         #    exactly what "no hand" already means to it, so both poses stay
         #    fully invisible to the recogniser's own state instead of
